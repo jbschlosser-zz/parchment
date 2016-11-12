@@ -2,6 +2,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Main where
 
+import qualified Data.Map.Lazy as Map
 import qualified Graphics.Vty as V
 import Brick.AttrMap (attrMap, AttrMap)
 import Brick.Main
@@ -47,35 +48,38 @@ import Lens.Micro ((.~), (^.), (&), (%~), over)
 import Lens.Micro.TH (makeLenses)
 
 data Fchar = Fchar {_ch :: Char, _attr :: V.Attr}
-data St = St {_scrollback :: [[Fchar]], _input :: String, _cursor :: Int}
+data St = St {
+    _scrollback :: [[Fchar]]
+    , _input :: String
+    , _cursor :: Int
+    , _bindings :: Map.Map V.Event (St -> EventM () (Next St))
+    }
 makeLenses ''Fchar
 makeLenses ''St
 
-fcharToMarkup :: Fchar -> Markup V.Attr
-fcharToMarkup = \t -> (singleton $ _ch t) @@ (_attr t)
-
-drawScrollbackLine :: [Fchar] -> Widget()
-drawScrollbackLine = markup . mconcat . map fcharToMarkup
-
 drawScrollback :: [[Fchar]] -> Widget()
 drawScrollback lines = foldr (<=>) (str "") $ map drawScrollbackLine lines
+    where drawScrollbackLine = markup . mconcat . map fcharToMarkup
+          fcharToMarkup = \t -> (singleton $ _ch t) @@ (_attr t)
 
 drawUI :: St -> [Widget()]
 drawUI (St {_scrollback = sb, _input = input, _cursor = cursor}) =
     [vBox [ drawScrollback sb
           , padTop Max $ hBorder
-          , showCursor () (Location (cursor, 0)) (str input)
+          , showCursor () (Location (cursor, 0))
+              (if length input > 0 then str input else str " ")
           ]]
 
-addKey :: St -> Char -> St
-addKey st k = (st & input .~ ((_input st) ++ [k])) & cursor .~ ((_cursor st) + 1)
+createBindings :: [(V.Event, (St -> EventM () (Next St)))] ->
+    Map.Map V.Event (St -> EventM () (Next St))
+createBindings = (mconcat . map createBinding)
+    where createBinding (e, b) = Map.insert e b Map.empty
 
 handleEvent :: St -> BrickEvent () e -> EventM () (Next St)
 handleEvent st (VtyEvent e) =
-    case e of
-        V.EvKey V.KEsc [] -> halt st
-        V.EvKey (V.KChar k) [] -> continue $ addKey st k
-        _ -> continue st
+    case Map.lookup e (_bindings st) of
+        Just b -> b st
+        Nothing -> continue st
 handleEvent st _ = continue st
 
 app :: App St e ()
@@ -90,11 +94,23 @@ app =
 testText :: String -> [Fchar]
 testText = map (\c -> Fchar {_ch = c, _attr = V.Attr {V.attrStyle = V.Default, V.attrForeColor = V.SetTo V.blue, V.attrBackColor = V.Default}})
 
+addKey :: St -> Char -> St
+addKey st k = (st & input .~ ((_input st) ++ [k])) & cursor .~ ((_cursor st) + 1)
+
+rawKeyBinding :: Char -> (V.Event, (St -> EventM () (Next St)))
+rawKeyBinding c = ((V.EvKey (V.KChar c) []), \st -> continue $ addKey st c)
+
+rawKeys :: String
+rawKeys = "abcdefghijklmnopqrstuvwxyz1234567890!@#$%^&*()_+-=_+[]\\;',./{}|:\"<>? `~"
+
 initialState =
     St {
         _scrollback = replicate 10 $ testText "hello"
-        , _input = " "
-        , _cursor = 1
+        , _input = ""
+        , _cursor = 0
+        , _bindings = createBindings
+            ([ ((V.EvKey V.KEsc []), \st -> halt st)
+            ] ++ map rawKeyBinding rawKeys)
         }
 
 main :: IO ()
