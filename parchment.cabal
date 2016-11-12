@@ -33,6 +33,7 @@ executable parchment
                      , data-default
                      , microlens
                      , microlens-th
+                     , containers
   default-language:    Haskell2010
 
 test-suite parchment-test

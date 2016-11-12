@@ -82,6 +82,25 @@ handleEvent st (VtyEvent e) =
         Nothing -> continue st
 handleEvent st _ = continue st
 
+testText :: String -> [Fchar]
+testText = map (\c -> Fchar {_ch = c, _attr = V.Attr {V.attrStyle = V.Default, V.attrForeColor = V.SetTo V.blue, V.attrBackColor = V.Default}})
+
+addKey :: St -> Char -> St
+addKey st k = (st & input .~ ((_input st) ++ [k])) & cursor .~ ((_cursor st) + 1)
+
+delKey :: St -> St
+delKey st =
+    if length (_input st) == 0 then
+        st
+    else
+        (st & input .~ (init (_input st))) & cursor .~ ((_cursor st) - 1)
+
+rawKeyBinding :: Char -> (V.Event, (St -> EventM () (Next St)))
+rawKeyBinding c = ((V.EvKey (V.KChar c) []), \st -> continue $ addKey st c)
+
+rawKeys :: String
+rawKeys = "abcdefghijklmnopqrstuvwxyz1234567890!@#$%^&*()_+-=_+[]\\;',./{}|:\"<>? `~"
+
 app :: App St e ()
 app =
     App { appDraw = drawUI
@@ -91,18 +110,6 @@ app =
         , appChooseCursor = showFirstCursor
         }
 
-testText :: String -> [Fchar]
-testText = map (\c -> Fchar {_ch = c, _attr = V.Attr {V.attrStyle = V.Default, V.attrForeColor = V.SetTo V.blue, V.attrBackColor = V.Default}})
-
-addKey :: St -> Char -> St
-addKey st k = (st & input .~ ((_input st) ++ [k])) & cursor .~ ((_cursor st) + 1)
-
-rawKeyBinding :: Char -> (V.Event, (St -> EventM () (Next St)))
-rawKeyBinding c = ((V.EvKey (V.KChar c) []), \st -> continue $ addKey st c)
-
-rawKeys :: String
-rawKeys = "abcdefghijklmnopqrstuvwxyz1234567890!@#$%^&*()_+-=_+[]\\;',./{}|:\"<>? `~"
-
 initialState =
     St {
         _scrollback = replicate 10 $ testText "hello"
@@ -110,6 +117,7 @@ initialState =
         , _cursor = 0
         , _bindings = createBindings
             ([ ((V.EvKey V.KEsc []), \st -> halt st)
+            , ((V.EvKey V.KBS []), \st -> continue $ delKey st)
             ] ++ map rawKeyBinding rawKeys)
         }
 
