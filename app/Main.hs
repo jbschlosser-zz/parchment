@@ -17,28 +17,25 @@ import Brick.Main
     )
 import Brick.Markup (markup, (@?))
 import Brick.Types
-  ( Widget
-  , Padding(..)
-  , Location(..)
-  , Next
-  , EventM
-  , BrickEvent(..)
-  )
+    ( Widget
+    , Padding(..)
+    , Location(..)
+    , Next
+    , EventM
+    , BrickEvent(..)
+    )
 import Brick.Util (on, fg)
 import Brick.Widgets.Core
-  ( (<=>)
-  , (<+>)
-  , padLeft
-  , padTop
-  , str
-  , vBox
-  , hBox
-  , showCursor
-  )
-import Brick.Widgets.Border
-  ( vBorder
-  , hBorder
-  )
+    ( (<=>)
+    , (<+>)
+    , padLeft
+    , padTop
+    , str
+    , vBox
+    , hBox
+    , showCursor
+    )
+import Brick.Widgets.Border (vBorder, hBorder)
 import Control.Monad (void, forever)
 import Data.List
 import Data.Monoid ((<>))
