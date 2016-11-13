@@ -34,6 +34,14 @@ executable parchment
                      , microlens
                      , microlens-th
                      , containers
+                     , conduit
+                     , conduit-extra
+                     , conduit-combinators
+                     , async
+                     , io-streams
+                     , stm
+                     , stm-conduit
+                     , split
   default-language:    Haskell2010
 
 test-suite parchment-test
