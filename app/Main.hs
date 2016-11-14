@@ -3,7 +3,8 @@
 module Main where
 
 import Conduit
-import qualified Data.ByteString.Char8 as BS
+import qualified Data.ByteString.Char8 as BSC
+import qualified Data.ByteString as BS
 import qualified Data.Conduit.Combinators as CC
 import qualified Data.Conduit.List as CL
 import qualified Data.Map.Lazy as Map
@@ -35,6 +36,8 @@ import Brick.Widgets.Core
     , (<+>)
     , padLeft
     , padTop
+    , padRight
+    , padBottom
     , str
     , vBox
     , hBox
@@ -46,13 +49,15 @@ import Control.Concurrent.Async (concurrently)
 import Control.Concurrent.STM.TQueue
 import Control.Monad (void, forever, liftM)
 import Control.Monad.IO.Class
+import Control.Monad.State
 import Control.Monad.STM (atomically, STM)
-import Data.Char (isAscii)
+import Data.Char (isLetter, isSpace)
 import Data.Conduit
 import Data.Conduit.Network
 import Data.Conduit.TQueue
 import Data.Conduit.TMChan hiding ((<=>))
 import Data.Default
+import Data.Word (Word8)
 import Data.List
 import Data.List.Split (splitOn)
 import Data.Monoid ((<>))
@@ -63,95 +68,97 @@ import GHC.IO.Handle
 import Lens.Micro ((.~), (^.), (&), (%~), over)
 import Lens.Micro.TH (makeLenses)
 import Network (withSocketsDo)
-import System.IO.Streams (
-    inputStreamToHandle
-    , outputStreamToHandle
-    , makeInputStream
-    , makeOutputStream
-    , lockingInputStream
-    , lockingOutputStream
-    , fromByteString
-    )
+import Parchment.Parsing
 
 data Fchar = Fchar {_ch :: Char, _attr :: V.Attr}
-data St = St {
+data Sess = Sess {
     _scrollback :: [[Fchar]]
     , _input :: String
     , _cursor :: Int
-    , _bindings :: Map.Map V.Event (St -> EventM () (Next St))
+    , _bindings :: Map.Map V.Event (Sess -> EventM () (Next Sess))
     , _send_queue :: TQueue BS.ByteString
+    , _telnet_state :: ParseState BS.ByteString
+    , _esc_seq_state :: ParseState BS.ByteString
+    , _char_attr :: V.Attr
     }
 data RecvEvent = RecvEvent BS.ByteString
 makeLenses ''Fchar
-makeLenses ''St
+makeLenses ''Sess
 
 drawScrollback :: [[Fchar]] -> Int -> Widget()
 drawScrollback lines num = foldr (<=>) (str "") $ map drawScrollbackLine $ take num lines
     where drawScrollbackLine = markup . mconcat . map fcharToMarkup
           fcharToMarkup = \t -> (singleton $ _ch t) @@ (_attr t)
 
-drawUI :: St -> [Widget()]
-drawUI (St {_scrollback = sb, _input = input, _cursor = cursor}) =
+drawUI :: Sess -> [Widget()]
+drawUI (Sess {_scrollback = sb, _input = input, _cursor = cursor}) =
     [vBox [ drawScrollback sb 10
           , padTop Max $ hBorder
           , showCursor () (Location (cursor, 0))
               (if length input > 0 then str input else str " ")
           ]]
 
-createBindings :: [(V.Event, (St -> EventM () (Next St)))] ->
-    Map.Map V.Event (St -> EventM () (Next St))
+createBindings :: [(V.Event, (Sess -> EventM () (Next Sess)))] ->
+    Map.Map V.Event (Sess -> EventM () (Next Sess))
 createBindings = (mconcat . map createBinding)
     where createBinding (e, b) = Map.insert e b Map.empty
 
-handleEvent :: St -> BrickEvent () RecvEvent -> EventM () (Next St)
+handleEvent :: Sess -> BrickEvent () RecvEvent -> EventM () (Next Sess)
 handleEvent st (VtyEvent e) =
     case Map.lookup e (_bindings st) of
         Just b -> b st
         Nothing -> continue st
 handleEvent st (AppEvent e) =
     case e of
-        RecvEvent bs -> continue $ recvData st bs
+        RecvEvent bs -> continue $ handleServerData st bs
 handleEvent st _ = continue st
 
-recvData :: St -> BS.ByteString -> St
-recvData st bs = st & scrollback .~ ((_scrollback st) ++
-    ((map testText) . (splitOn "\n") . filter isAscii $ BS.unpack bs))
+recvData :: Sess -> BS.ByteString -> Sess
+recvData st bs = st & scrollback .~ ((_scrollback st) ++ [testText $ show $ length $
+    ((map testText) . (splitOn "\n") . filter
+        (or . \x -> map ($ x) [isLetter, isSpace]) $ BSC.unpack bs)])
+
+word8ToChar :: Word8 -> Char
+word8ToChar = BSC.head . BS.singleton
 
 testText :: String -> [Fchar]
-testText = map (\c -> Fchar {
+testText = map testChar
+
+testChar :: Char -> Fchar
+testChar c = Fchar {
     _ch = c,
     _attr = V.Attr {
         V.attrStyle = V.Default,
         V.attrForeColor = V.SetTo V.blue,
         V.attrBackColor = V.Default
         }
-    })
+    }
 
-addKey :: St -> Char -> St
+addKey :: Sess -> Char -> Sess
 addKey st k = (st & input .~ ((_input st) ++ [k])) & cursor .~ ((_cursor st) + 1)
 
-delKey :: St -> St
+delKey :: Sess -> Sess
 delKey st =
     if length (_input st) == 0 then
         st
     else
         (st & input .~ (init (_input st))) & cursor .~ ((_cursor st) - 1)
 
-sendInput :: St -> IO St
+sendInput :: Sess -> IO Sess
 sendInput st = do
-    atomically $ writeTQueue (_send_queue st) (BS.pack $ (_input st) ++ "\r\n")
+    atomically $ writeTQueue (_send_queue st) (BSC.pack $ (_input st) ++ "\r\n")
     return st
 
-clearInput :: St -> St
+clearInput :: Sess -> Sess
 clearInput st = (st & input .~ "") & cursor .~ 0
 
-rawKeyBinding :: Char -> (V.Event, (St -> EventM () (Next St)))
+rawKeyBinding :: Char -> (V.Event, (Sess -> EventM () (Next Sess)))
 rawKeyBinding c = ((V.EvKey (V.KChar c) []), \st -> continue $ addKey st c)
 
 rawKeys :: String
 rawKeys = "abcdefghijklmnopqrstuvwxyz1234567890!@#$%^&*()_+-=_+[]\\;',./{}|:\"<>? `~"
 
-app :: App St RecvEvent ()
+app :: App Sess RecvEvent ()
 app =
     App { appDraw = drawUI
         , appHandleEvent = handleEvent
@@ -160,9 +167,9 @@ app =
         , appChooseCursor = showFirstCursor
         }
 
-initialState :: TQueue BS.ByteString -> St
+initialState :: TQueue BS.ByteString -> Sess
 initialState q =
-    St {
+    Sess {
         _scrollback = [[]]
         , _input = ""
         , _cursor = 0
@@ -174,6 +181,13 @@ initialState q =
                 continue $ clearInput s)
             ] ++ map rawKeyBinding rawKeys)
         , _send_queue = q
+        , _telnet_state = NotInProgress
+        , _esc_seq_state = NotInProgress
+        , _char_attr = V.Attr
+            { V.attrStyle = V.Default
+            , V.attrForeColor = V.Default
+            , V.attrBackColor = V.Default
+            }
         }
 
 -- channel, write func, close func
@@ -185,15 +199,65 @@ chanSink ch writer closer = do
 chanWriteRecvEvent :: Chan RecvEvent -> BS.ByteString -> IO ()
 chanWriteRecvEvent c s = writeChan c (RecvEvent s)
 
-serverDataReceived :: MonadIO m => TQueue a -> Chan RecvEvent -> Sink a m ()
-serverDataReceived q c = sinkTQueue q
+addScrollbackChar :: [[Fchar]] -> Fchar -> [[Fchar]]
+addScrollbackChar sb c =
+    if (_ch c) == '\n' then
+        -- Add new empty line.
+        sb ++ [[]]
+    else if length sb == 0 then
+        -- Init with char.
+        [[c]]
+    else
+        -- Add char to end of last line.
+        init sb ++ [(last sb ++ [c])]
+
+{-handleServerByte :: Sess -> Word8 -> Sess
+handleServerByte st b =
+    let st = st & telnet_state .~ (parseTelnet (_telnet_state st) b) in
+    case parseTelnet (_telnet_state st) b of
+        NotInProgress -> let st = st & esc_seq_state .~ (parseEscSeq (_esc_seq_state st) b) in
+                         case parseEscSeq (_esc_seq_state st) b of
+                             NotInProgress -> st & scrollback .~ addScrollbackChar (_scrollback st) (testChar $ word8ToChar b)
+                             InProgress bs -> st
+                             Success seq -> st -- TODO: change
+                             Error bs -> st
+
+        InProgress bs -> st
+        Success cmd -> st -- TODO: change
+        Error bs -> st-}
+
+handleServerByte :: Sess -> Word8 -> Sess
+handleServerByte st b =
+    execState (
+        do
+            sess <- get
+            let new_telnet = parseTelnet (_telnet_state sess) b
+            put (sess & telnet_state .~ new_telnet)
+            case new_telnet of
+                NotInProgress -> do
+                    sess <- get
+                    let new_esc_seq = parseEscSeq (_esc_seq_state sess) b
+                    put (sess & esc_seq_state .~ new_esc_seq)
+                    case new_esc_seq of
+                         NotInProgress -> do
+                             sess <- get
+                             put (sess & scrollback .~ addScrollbackChar
+                                 (_scrollback st) (testChar $ word8ToChar b))
+                             return ()
+                         _ -> return ()
+                    return ()
+                _ -> return ()
+        ) st
+
+handleServerData :: Sess -> BS.ByteString -> Sess
+handleServerData st bs = foldl handleServerByte st $ BS.unpack bs
 
 main :: IO ()
 main = withSocketsDo $ void $ do
     send_queue <- newTQueueIO
     recv_queue <- newTQueueIO
     eventChan <- newChan
-    tid <- forkIO $ runTCPClient (clientSettings 4000 (BS.pack "127.0.0.1")) $ \server ->
+    tid <- forkIO $ runTCPClient (clientSettings 4000 (BSC.pack "127.0.0.1")) $ \server ->
         void $ concurrently
             (appSource server $$ chanSink eventChan chanWriteRecvEvent (\c -> return ()))
             (sourceTQueue send_queue $$ appSink server)
