@@ -60,7 +60,7 @@ import Data.Default
 import Data.Word (Word8)
 import Data.List
 import Data.List.Split (splitOn)
-import Data.Monoid ((<>))
+import Data.Monoid ((<>), appEndo, Endo(..))
 import Data.String
 import Data.Text (singleton)
 import Data.Text.Markup ((@@), Markup)
@@ -69,8 +69,11 @@ import Lens.Micro ((.~), (^.), (&), (%~), over)
 import Lens.Micro.TH (makeLenses)
 import Network (withSocketsDo)
 import Parchment.Parsing
+import Text.Parsec
 
 data Fchar = Fchar {_ch :: Char, _attr :: V.Attr}
+instance Show Fchar where
+    show Fchar {_ch = ch, _attr = attr} = show ch
 data Sess = Sess {
     _scrollback :: [[Fchar]]
     , _input :: String
@@ -87,7 +90,8 @@ makeLenses ''Sess
 
 drawScrollback :: [[Fchar]] -> Int -> Widget()
 drawScrollback lines num = foldr (<=>) (str "") $ map drawScrollbackLine $ take num lines
-    where drawScrollbackLine = markup . mconcat . map fcharToMarkup
+    where drawScrollbackLine [] = str " " -- handle blank case
+          drawScrollbackLine s = markup . mconcat . map fcharToMarkup $ s
           fcharToMarkup = \t -> (singleton $ _ch t) @@ (_attr t)
 
 drawUI :: Sess -> [Widget()]
@@ -183,11 +187,7 @@ initialState q =
         , _send_queue = q
         , _telnet_state = NotInProgress
         , _esc_seq_state = NotInProgress
-        , _char_attr = V.Attr
-            { V.attrStyle = V.Default
-            , V.attrForeColor = V.Default
-            , V.attrBackColor = V.Default
-            }
+        , _char_attr = V.defAttr
         }
 
 -- channel, write func, close func
@@ -204,6 +204,8 @@ addScrollbackChar sb c =
     if (_ch c) == '\n' then
         -- Add new empty line.
         sb ++ [[]]
+    else if (_ch c) == '\r' then
+        sb
     else if length sb == 0 then
         -- Init with char.
         [[c]]
@@ -211,20 +213,48 @@ addScrollbackChar sb c =
         -- Add char to end of last line.
         init sb ++ [(last sb ++ [c])]
 
-{-handleServerByte :: Sess -> Word8 -> Sess
-handleServerByte st b =
-    let st = st & telnet_state .~ (parseTelnet (_telnet_state st) b) in
-    case parseTelnet (_telnet_state st) b of
-        NotInProgress -> let st = st & esc_seq_state .~ (parseEscSeq (_esc_seq_state st) b) in
-                         case parseEscSeq (_esc_seq_state st) b of
-                             NotInProgress -> st & scrollback .~ addScrollbackChar (_scrollback st) (testChar $ word8ToChar b)
-                             InProgress bs -> st
-                             Success seq -> st -- TODO: change
-                             Error bs -> st
+updateCharAttr :: V.Attr -> BS.ByteString -> V.Attr
+updateCharAttr attr seq =
+    case parse escSeqParser "error" (BSC.unpack seq) of
+         Right [] -> V.defAttr -- handle \ESC[m case
+         Right parts -> foldFuncList (map escSeqPartTransform parts) attr
+         Left _ -> attr
 
-        InProgress bs -> st
-        Success cmd -> st -- TODO: change
-        Error bs -> st-}
+foldFuncList :: [a -> a] -> a -> a
+foldFuncList = appEndo . foldMap Endo . reverse
+
+escSeqPartTransform :: String -> V.Attr -> V.Attr
+escSeqPartTransform "0" = const V.defAttr
+escSeqPartTransform "1" = flip V.withStyle V.bold
+escSeqPartTransform "30" = flip V.withForeColor V.black
+escSeqPartTransform "31" = flip V.withForeColor V.red
+escSeqPartTransform "32" = flip V.withForeColor V.green
+escSeqPartTransform "33" = flip V.withForeColor V.yellow
+escSeqPartTransform "34" = flip V.withForeColor V.blue
+escSeqPartTransform "35" = flip V.withForeColor V.magenta
+escSeqPartTransform "36" = flip V.withForeColor V.cyan
+escSeqPartTransform "37" = flip V.withForeColor V.white
+--escSeqPartTransform "39" = \a ->
+--    let curr_style = (V.attrStyle a)
+--        curr_back = (V.attrBackColor a)
+--        in V.withBackColor $ (V.withStyle V.defAttr curr_style) curr_back
+escSeqPartTransform "40" = flip V.withBackColor V.black
+escSeqPartTransform "41" = flip V.withBackColor V.red
+escSeqPartTransform "42" = flip V.withBackColor V.green
+escSeqPartTransform "43" = flip V.withBackColor V.yellow
+escSeqPartTransform "44" = flip V.withBackColor V.blue
+escSeqPartTransform "45" = flip V.withBackColor V.magenta
+escSeqPartTransform "46" = flip V.withBackColor V.cyan
+escSeqPartTransform "47" = flip V.withBackColor V.white
+--escSeqPartTransform "49" = \a ->
+--    let curr_style = (V.attrStyle a)
+--        curr_fore = (V.attrForeColor a)
+--        in V.withForeColor $ (V.withStyle V.defAttr curr_style) curr_fore
+escSeqPartTransform _ = id -- ignore unknown parts
+
+-- Returns the internal parts of the esc sequence.
+escSeqParser :: Parsec String () [String]
+escSeqParser = string "\ESC[" *> sepBy (many1 digit) (char ';') <* char 'm'
 
 handleServerByte :: Sess -> Word8 -> Sess
 handleServerByte st b =
@@ -242,7 +272,12 @@ handleServerByte st b =
                          NotInProgress -> do
                              sess <- get
                              put (sess & scrollback .~ addScrollbackChar
-                                 (_scrollback st) (testChar $ word8ToChar b))
+                                 (_scrollback st) (Fchar {
+                                     _ch =  word8ToChar b, _attr = (_char_attr sess)}))
+                             return ()
+                         Success seq -> do
+                             sess <- get
+                             put (sess & char_attr .~ updateCharAttr ((_char_attr sess)) seq)
                              return ()
                          _ -> return ()
                     return ()
@@ -250,7 +285,7 @@ handleServerByte st b =
         ) st
 
 handleServerData :: Sess -> BS.ByteString -> Sess
-handleServerData st bs = foldl handleServerByte st $ BS.unpack bs
+handleServerData st bs = foldl' handleServerByte st $ BS.unpack bs
 
 main :: IO ()
 main = withSocketsDo $ void $ do

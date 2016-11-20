@@ -46,6 +46,7 @@ executable parchment
                      , stm-conduit
                      , split
                      , mtl
+                     , parsec
   default-language:    Haskell2010
 
 test-suite parchment-test
