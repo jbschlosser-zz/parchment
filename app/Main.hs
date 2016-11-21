@@ -224,33 +224,37 @@ foldFuncList :: [a -> a] -> a -> a
 foldFuncList = appEndo . foldMap Endo . reverse
 
 escSeqPartTransform :: String -> V.Attr -> V.Attr
-escSeqPartTransform "0" = const V.defAttr
-escSeqPartTransform "1" = flip V.withStyle V.bold
-escSeqPartTransform "30" = flip V.withForeColor V.black
-escSeqPartTransform "31" = flip V.withForeColor V.red
-escSeqPartTransform "32" = flip V.withForeColor V.green
-escSeqPartTransform "33" = flip V.withForeColor V.yellow
-escSeqPartTransform "34" = flip V.withForeColor V.blue
-escSeqPartTransform "35" = flip V.withForeColor V.magenta
-escSeqPartTransform "36" = flip V.withForeColor V.cyan
-escSeqPartTransform "37" = flip V.withForeColor V.white
---escSeqPartTransform "39" = \a ->
---    let curr_style = (V.attrStyle a)
---        curr_back = (V.attrBackColor a)
---        in V.withBackColor $ (V.withStyle V.defAttr curr_style) curr_back
-escSeqPartTransform "40" = flip V.withBackColor V.black
-escSeqPartTransform "41" = flip V.withBackColor V.red
-escSeqPartTransform "42" = flip V.withBackColor V.green
-escSeqPartTransform "43" = flip V.withBackColor V.yellow
-escSeqPartTransform "44" = flip V.withBackColor V.blue
-escSeqPartTransform "45" = flip V.withBackColor V.magenta
-escSeqPartTransform "46" = flip V.withBackColor V.cyan
-escSeqPartTransform "47" = flip V.withBackColor V.white
---escSeqPartTransform "49" = \a ->
---    let curr_style = (V.attrStyle a)
---        curr_fore = (V.attrForeColor a)
---        in V.withForeColor $ (V.withStyle V.defAttr curr_style) curr_fore
-escSeqPartTransform _ = id -- ignore unknown parts
+escSeqPartTransform s =
+    case s of
+        "0" -> const V.defAttr
+        "1" -> flip V.withStyle V.bold
+        "30" -> flip V.withForeColor V.black
+        "31" -> flip V.withForeColor V.red
+        "32" -> flip V.withForeColor V.green
+        "33" -> flip V.withForeColor V.yellow
+        "34" -> flip V.withForeColor V.blue
+        "35" -> flip V.withForeColor V.magenta
+        "36" -> flip V.withForeColor V.cyan
+        "37" -> flip V.withForeColor V.white
+        "39" -> \a -> V.Attr
+            { V.attrStyle = (V.attrStyle a)
+            , V.attrForeColor = V.Default
+            , V.attrBackColor = (V.attrBackColor a)
+            }
+        "40" -> flip V.withBackColor V.black
+        "41" -> flip V.withBackColor V.red
+        "42" -> flip V.withBackColor V.green
+        "43" -> flip V.withBackColor V.yellow
+        "44" -> flip V.withBackColor V.blue
+        "45" -> flip V.withBackColor V.magenta
+        "46" -> flip V.withBackColor V.cyan
+        "47" -> flip V.withBackColor V.white
+        "49" -> \a -> V.Attr
+            { V.attrStyle = (V.attrStyle a)
+            , V.attrForeColor = (V.attrForeColor a)
+            , V.attrBackColor = V.Default
+            }
+        _ -> id
 
 -- Returns the internal parts of the esc sequence.
 escSeqParser :: Parsec String () [String]
