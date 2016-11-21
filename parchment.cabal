@@ -18,8 +18,17 @@ library
   exposed-modules:
       Parchment
       Parchment.Parsing
+      Parchment.Session
   build-depends:       base >= 4.7 && < 5
                      , bytestring >= 0.10
+                     , brick >= 0.13
+                     , containers
+                     , parsec
+                     , vty
+                     , microlens
+                     , microlens-th
+                     , mtl
+                     , stm
   default-language:    Haskell2010
 
 executable parchment

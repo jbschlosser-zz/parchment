@@ -2,10 +2,12 @@ module Parchment.Parsing
     ( parseTelnet
     , parseEscSeq
     , ParseState(..)
+    , escSeqPartParser
     ) where
 
-import Data.Word (Word8)
 import qualified Data.ByteString as BS
+import Data.Word (Word8)
+import Text.Parsec hiding (Error)
 
 data ParseState a = NotInProgress | InProgress a | Success a | Error a
     deriving (Show)
@@ -93,3 +95,6 @@ parseEscSeq st b =
                 InProgress new_bs
          _ -> parseEscSeq NotInProgress b 
 
+-- Returns the internal parts of the esc sequence.
+escSeqPartParser :: Parsec String () [String]
+escSeqPartParser = string "\ESC[" *> sepBy (many1 digit) (char ';') <* char 'm'
