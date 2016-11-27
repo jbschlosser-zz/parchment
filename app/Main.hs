@@ -6,9 +6,10 @@ import Brick.AttrMap (attrMap, AttrMap)
 import Brick.Main (App(..), defaultMain, customMain, resizeOrQuit, neverShowCursor,
                    showFirstCursor, halt, continue, suspendAndResume)
 import Brick.Markup (markup, (@?))
-import Brick.Types (Widget, Padding(..), Location(..), Next(..), EventM, BrickEvent(..))
+import Brick.Types (Widget(..), Padding(..), Location(..), Next(..), EventM, BrickEvent(..),
+                    getContext, Size(..), Result(..), availHeightL)
 import Brick.Widgets.Core ((<=>), (<+>), padLeft, padTop, padRight, padBottom, str, vBox,
-                           hBox, showCursor)
+                           hBox, showCursor, vLimit, fill)
 import Brick.Widgets.Border (hBorder)
 import Conduit
 import Control.Concurrent (forkIO, newChan, Chan, writeChan)
@@ -26,6 +27,7 @@ import qualified Data.Map.Lazy as Map
 import Data.Text (singleton)
 import Data.Text.Markup ((@@), Markup)
 import qualified Graphics.Vty as V
+import Lens.Micro ((.~), (^.), (&), (%~), over)
 import Network (withSocketsDo)
 import Parchment.Parsing
 import Parchment.Session
@@ -69,11 +71,14 @@ initialState q =
             , ((V.EvKey V.KEnter []), \st -> do
                 s <- liftIO $ sendInput st
                 continue $ clearInput s)
+            , ((V.EvKey V.KPageUp []), \st -> continue $ pageUp st)
+            , ((V.EvKey V.KPageDown []), \st -> continue $ pageDown st)
             ] ++ map rawKeyBinding rawKeys)
         , _send_queue = q
         , _telnet_state = NotInProgress
         , _esc_seq_state = NotInProgress
         , _char_attr = V.defAttr
+        , _scroll_loc = 0
         }
 
 -- Handle UI and other app events.
@@ -89,15 +94,20 @@ handleEvent st _ = continue st
 
 -- Draw the UI.
 drawUI :: Sess -> [Widget()]
-drawUI (Sess {_scrollback = sb, _input = input, _cursor = cursor}) =
-    [vBox [ drawScrollback sb 10
-          , padTop Max $ hBorder
+drawUI (Sess {_scrollback = sb, _input = input, _cursor = cursor, _scroll_loc = scroll}) =
+    [vBox [ padBottom Max $ drawScrollback sb scroll
+          , hBorder
           , showCursor () (Location (cursor, 0))
               (if length input > 0 then str input else str " ")
           ]]
 
 drawScrollback :: [[Fchar]] -> Int -> Widget()
-drawScrollback lines num = foldr (<=>) (str "") $ map drawScrollbackLine $ take num lines
+drawScrollback lines scroll = 
+    Widget Greedy Greedy $ do
+        ctx <- getContext
+        let num = ctx ^. availHeightL
+        let start = max 0 $ length lines - scroll - num
+        render $ foldr (<=>) (str "") $ map drawScrollbackLine $ take num $ drop start lines
     where drawScrollbackLine [] = str " " -- handle blank case
           drawScrollbackLine s = markup . mconcat . map fcharToMarkup $ s
           fcharToMarkup = \t -> (singleton $ _ch t) @@ (_attr t)

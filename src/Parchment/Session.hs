@@ -8,9 +8,12 @@ module Parchment.Session
     , sendInput
     , clearInput
     , receiveServerData
+    , pageUp
+    , pageDown
     ) where
 
 import Brick.Types (EventM, Next)
+import Brick.Util (clamp)
 import Control.Concurrent.STM.TQueue
 import Control.Monad.State (get, put, execState)
 import Control.Monad.STM (atomically, STM)
@@ -40,6 +43,7 @@ data Sess = Sess {
     , _telnet_state :: ParseState BS.ByteString
     , _esc_seq_state :: ParseState BS.ByteString
     , _char_attr :: V.Attr
+    , _scroll_loc :: Int
     }
 makeLenses ''Sess
 
@@ -64,6 +68,16 @@ clearInput st = (st & input .~ "") & cursor .~ 0
 
 receiveServerData :: Sess -> BS.ByteString -> Sess
 receiveServerData st bs = foldl' handleServerByte st $ BS.unpack bs
+
+scrollLines :: Sess -> Int -> Sess
+scrollLines st n = (st & scroll_loc .~ (clamp 0 (length $ _scrollback st) $
+    (_scroll_loc st) + n))
+
+pageUp :: Sess -> Sess
+pageUp = flip scrollLines 10
+
+pageDown :: Sess -> Sess
+pageDown = flip scrollLines $ -10
 
 -- === HELPER FUNCTIONS ===
 handleServerByte :: Sess -> Word8 -> Sess

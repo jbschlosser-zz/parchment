@@ -21,7 +21,7 @@ library
       Parchment.Session
   build-depends:       base >= 4.7 && < 5
                      , bytestring >= 0.10
-                     , brick >= 0.13
+                     , brick
                      , containers
                      , parsec
                      , vty
@@ -39,7 +39,7 @@ executable parchment
                      , parchment
                      , network >= 2.6
                      , bytestring >= 0.10
-                     , brick >= 0.13
+                     , brick
                      , vty
                      , text
                      , data-default
