@@ -23,6 +23,7 @@ import qualified Data.Conduit.List as CL
 import Data.Conduit.Network
 import Data.Conduit.TQueue (sourceTQueue)
 import Data.Default
+import Data.Map (fromList)
 import qualified Data.Map.Lazy as Map
 import Data.Text (singleton)
 import Data.Text.Markup ((@@), Markup)
@@ -65,7 +66,7 @@ initialState q =
         _scrollback = [[]]
         , _input = ""
         , _cursor = 0
-        , _bindings = createBindings
+        , _bindings = fromList
             ([ ((V.EvKey V.KEsc []), \st -> halt st)
             , ((V.EvKey V.KBS []), \st -> continue $ delKey st)
             , ((V.EvKey V.KEnter []), \st -> do
@@ -113,12 +114,6 @@ drawScrollback lines scroll =
           fcharToMarkup = \t -> (singleton $ _ch t) @@ (_attr t)
 
 -- Helper functions.
--- Creates bindings from a list of tuples.
-createBindings :: [(V.Event, (Sess -> EventM () (Next Sess)))] ->
-    Map.Map V.Event (Sess -> EventM () (Next Sess))
-createBindings = (mconcat . map createBinding)
-    where createBinding (e, b) = Map.insert e b Map.empty
-
 -- Creates a binding for a raw char key.
 rawKeyBinding :: Char -> (V.Event, (Sess -> EventM () (Next Sess)))
 rawKeyBinding c = ((V.EvKey (V.KChar c) []), \st -> continue $ addKey st c)
