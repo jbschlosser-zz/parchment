@@ -64,22 +64,25 @@ initialState :: TQueue BS.ByteString -> Sess
 initialState q =
     Sess {
         _scrollback = [[]]
-        , _input = ""
         , _cursor = 0
         , _bindings = fromList
-            ([ ((V.EvKey V.KEsc []), \st -> halt st)
-            , ((V.EvKey V.KBS []), \st -> continue $ delKey st)
-            , ((V.EvKey V.KEnter []), \st -> do
-                s <- liftIO $ sendInput st
-                continue $ clearInput s)
-            , ((V.EvKey V.KPageUp []), \st -> continue $ pageUp st)
-            , ((V.EvKey V.KPageDown []), \st -> continue $ pageDown st)
+            ([ ((V.EvKey V.KEsc []), \sess -> halt sess)
+            , ((V.EvKey V.KBS []), \sess -> continue $ delKey sess)
+            , ((V.EvKey V.KEnter []), \sess -> do
+                sess <- liftIO $ sendToServer (getInput sess) sess
+                continue $ nextHistory sess)
+            , ((V.EvKey V.KPageUp []), \sess -> continue $ pageUp sess)
+            , ((V.EvKey V.KPageDown []), \sess -> continue $ pageDown sess)
+            , ((V.EvKey V.KUp []), \sess -> continue $ historyOlder sess)
+            , ((V.EvKey V.KDown []), \sess -> continue $ historyNewer sess)
             ] ++ map rawKeyBinding rawKeys)
         , _send_queue = q
         , _telnet_state = NotInProgress
         , _esc_seq_state = NotInProgress
         , _char_attr = V.defAttr
         , _scroll_loc = 0
+        , _history = [""]
+        , _history_loc = 0
         }
 
 -- Handle UI and other app events.
@@ -95,12 +98,17 @@ handleEvent st _ = continue st
 
 -- Draw the UI.
 drawUI :: Sess -> [Widget()]
-drawUI (Sess {_scrollback = sb, _input = input, _cursor = cursor, _scroll_loc = scroll}) =
+drawUI sess =
     [vBox [ padBottom Max $ drawScrollback sb scroll
           , hBorder
-          , showCursor () (Location (cursor, 0))
+          , showCursor () (Location (curs, 0))
               (if length input > 0 then str input else str " ")
           ]]
+    -- TODO: Fix this to use lenses.
+    where input = getInput sess
+          sb = _scrollback sess
+          curs = _cursor sess
+          scroll = _scroll_loc sess
 
 drawScrollback :: [[Fchar]] -> Int -> Widget()
 drawScrollback lines scroll = 
@@ -116,7 +124,7 @@ drawScrollback lines scroll =
 -- Helper functions.
 -- Creates a binding for a raw char key.
 rawKeyBinding :: Char -> (V.Event, (Sess -> EventM () (Next Sess)))
-rawKeyBinding c = ((V.EvKey (V.KChar c) []), \st -> continue $ addKey st c)
+rawKeyBinding c = ((V.EvKey (V.KChar c) []), \st -> continue $ addKey c st)
 
 -- The raw keys to use.
 rawKeys :: String

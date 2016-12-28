@@ -5,11 +5,17 @@ module Parchment.Session
     , Sess(..)
     , addKey
     , delKey
-    , sendInput
-    , clearInput
+    , sendToServer
+    , clearInputLine
+    , getInput
+    , nextHistory
     , receiveServerData
     , pageUp
     , pageDown
+    , scrollLines
+    , historyOlder
+    , historyNewer
+    , scrollHistory
     ) where
 
 import Brick.Types (EventM, Next)
@@ -24,7 +30,7 @@ import qualified Data.Map.Lazy as Map
 import Data.Monoid (appEndo, Endo(..))
 import Data.Word (Word8)
 import Graphics.Vty as V
-import Lens.Micro ((.~), (^.), (&), (%~), over)
+import Lens.Micro ((.~), (^.), (&), (%~), over, ix)
 import Lens.Micro.TH (makeLenses)
 import Parchment.Parsing
 import Text.Parsec (parse)
@@ -36,7 +42,6 @@ makeLenses ''Fchar
 
 data Sess = Sess {
     _scrollback :: [[Fchar]]
-    , _input :: String
     , _cursor :: Int
     , _bindings :: Map.Map V.Event (Sess -> EventM () (Next Sess))
     , _send_queue :: TQueue BS.ByteString
@@ -44,44 +49,68 @@ data Sess = Sess {
     , _esc_seq_state :: ParseState BS.ByteString
     , _char_attr :: V.Attr
     , _scroll_loc :: Int
+    , _history :: [String]
+    , _history_loc :: Int
     }
 makeLenses ''Sess
 
 -- === ACTIONS ===
-addKey :: Sess -> Char -> Sess
-addKey st k = (st & input .~ ((_input st) ++ [k])) & cursor .~ ((_cursor st) + 1)
+addKey :: Char -> Sess -> Sess
+addKey k sess = sess & history . ix (sess ^. history_loc) %~ (++ [k]) & cursor %~ (+1)
 
 delKey :: Sess -> Sess
-delKey st =
-    if length (_input st) == 0 then
-        st
+delKey sess =
+    if length (getInput sess) == 0 then
+        sess
     else
-        (st & input .~ (init (_input st))) & cursor .~ ((_cursor st) - 1)
+        sess & history . ix (sess ^. history_loc) %~ init & cursor %~ subtract 1
 
-sendInput :: Sess -> IO Sess
-sendInput st = do
-    atomically $ writeTQueue (_send_queue st) (BSC.pack $ (_input st) ++ "\r\n")
-    return st
+getInput :: Sess -> String
+getInput sess = flip (^.) (history . ix (sess ^. history_loc)) $ sess
 
-clearInput :: Sess -> Sess
-clearInput st = (st & input .~ "") & cursor .~ 0
+clearInputLine :: Sess -> Sess
+clearInputLine sess = sess & history . ix (sess ^. history_loc) .~ "" & cursor .~ 0
 
-receiveServerData :: Sess -> BS.ByteString -> Sess
-receiveServerData st bs = foldl' handleServerByte st $ BS.unpack bs
-
-scrollLines :: Sess -> Int -> Sess
-scrollLines st n = (st & scroll_loc .~ (clamp 0 (length $ _scrollback st) $
-    (_scroll_loc st) + n))
+scrollLines :: Int -> Sess -> Sess
+scrollLines n sess = sess & scroll_loc %~
+    (\sl -> clampExclusive 0 (length $ sess ^. scrollback) $ sl + n)
 
 pageUp :: Sess -> Sess
-pageUp = flip scrollLines 10
+pageUp = scrollLines 10
 
 pageDown :: Sess -> Sess
-pageDown = flip scrollLines $ -10
+pageDown = scrollLines $ -10
+
+nextHistory :: Sess -> Sess
+nextHistory sess = sess &
+    history %~ (++ [""]) &
+    history_loc .~ (length $ sess ^. history) & -- based on old history length
+    cursor .~ 0
+
+scrollHistory :: Int -> Sess -> Sess
+scrollHistory n sess = sess &
+    history_loc .~ new_loc &
+    cursor .~ new_cursor
+    where new_loc = clampExclusive 0 (length $ sess ^. history) $ (sess ^. history_loc) + n
+          new_cursor = length $ sess ^. (history . ix new_loc)
+
+historyOlder :: Sess -> Sess
+historyOlder = scrollHistory $ -1
+
+historyNewer :: Sess -> Sess
+historyNewer = scrollHistory 1
+
+sendToServer :: String -> Sess -> IO Sess
+sendToServer str sess = do
+    atomically $ writeTQueue (_send_queue sess) (BSC.pack $ str ++ "\r\n")
+    return sess
+
+receiveServerData :: Sess -> BS.ByteString -> Sess
+receiveServerData sess bs = foldl' handleServerByte sess $ BS.unpack bs
 
 -- === HELPER FUNCTIONS ===
 handleServerByte :: Sess -> Word8 -> Sess
-handleServerByte st b =
+handleServerByte sess b =
     execState (
         do
             sess <- get
@@ -96,7 +125,7 @@ handleServerByte st b =
                          NotInProgress -> do
                              sess <- get
                              put (sess & scrollback .~ addScrollbackChar
-                                 (_scrollback st) (Fchar
+                                 (_scrollback sess) (Fchar
                                      { _ch = BSC.head . BS.singleton $ b
                                      , _attr = (_char_attr sess)}))
                              return ()
@@ -107,7 +136,7 @@ handleServerByte st b =
                          _ -> return ()
                     return ()
                 _ -> return ()
-        ) st
+        ) sess
 
 addScrollbackChar :: [[Fchar]] -> Fchar -> [[Fchar]]
 addScrollbackChar sb c =
@@ -125,6 +154,9 @@ addScrollbackChar sb c =
 
 foldFuncList :: [a -> a] -> a -> a
 foldFuncList = appEndo . foldMap Endo . reverse
+
+clampExclusive :: Int -> Int -> Int -> Int
+clampExclusive min max = clamp min (max - 1)
 
 updateCharAttr :: V.Attr -> BS.ByteString -> V.Attr
 updateCharAttr attr seq =
