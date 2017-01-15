@@ -3,6 +3,7 @@
 module Parchment.Session
     ( Fchar(..)
     , Sess(..)
+    , initialSession
     , addKey
     , delKey
     , sendToServer
@@ -53,6 +54,23 @@ data Sess = Sess {
     , _history_loc :: Int
     }
 makeLenses ''Sess
+
+-- Initial state of the session data.
+initialSession :: TQueue BS.ByteString ->
+    Map.Map V.Event (Sess -> EventM () (Next Sess)) -> Sess
+initialSession q bindings =
+    Sess {
+        _scrollback = [[]]
+        , _cursor = 0
+        , _bindings = bindings
+        , _send_queue = q
+        , _telnet_state = NotInProgress
+        , _esc_seq_state = NotInProgress
+        , _char_attr = V.defAttr
+        , _scroll_loc = 0
+        , _history = [""]
+        , _history_loc = 0
+        }
 
 -- === ACTIONS ===
 addKey :: Char -> Sess -> Sess

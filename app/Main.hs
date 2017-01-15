@@ -45,7 +45,7 @@ main = withSocketsDo $ void $ do
         void $ concurrently
             (appSource server $$ chanSink eventChan chanWriteRecvEvent (\c -> return ()))
             (sourceTQueue send_queue $$ appSink server)
-    customMain (V.mkVty def) (Just eventChan) app (initialState send_queue)
+    customMain (V.mkVty def) (Just eventChan) app (initialSession send_queue keyBindings)
     where
         chanWriteRecvEvent c s = writeChan c (RecvEvent s)
 
@@ -59,31 +59,18 @@ app =
         , appChooseCursor = showFirstCursor
         }
 
--- Initial state of the session data.
-initialState :: TQueue BS.ByteString -> Sess
-initialState q =
-    Sess {
-        _scrollback = [[]]
-        , _cursor = 0
-        , _bindings = fromList
-            ([ ((V.EvKey V.KEsc []), \sess -> halt sess)
-            , ((V.EvKey V.KBS []), \sess -> continue $ delKey sess)
-            , ((V.EvKey V.KEnter []), \sess -> do
-                sess <- liftIO $ sendToServer (getInput sess) sess
-                continue $ nextHistory sess)
-            , ((V.EvKey V.KPageUp []), \sess -> continue $ pageUp sess)
-            , ((V.EvKey V.KPageDown []), \sess -> continue $ pageDown sess)
-            , ((V.EvKey V.KUp []), \sess -> continue $ historyOlder sess)
-            , ((V.EvKey V.KDown []), \sess -> continue $ historyNewer sess)
-            ] ++ map rawKeyBinding rawKeys)
-        , _send_queue = q
-        , _telnet_state = NotInProgress
-        , _esc_seq_state = NotInProgress
-        , _char_attr = V.defAttr
-        , _scroll_loc = 0
-        , _history = [""]
-        , _history_loc = 0
-        }
+-- Key bindings.
+keyBindings = fromList
+    ([ ((V.EvKey V.KEsc []), \sess -> halt sess)
+    , ((V.EvKey V.KBS []), \sess -> continue $ delKey sess)
+    , ((V.EvKey V.KEnter []), \sess -> do
+        sess <- liftIO $ sendToServer (getInput sess) sess
+        continue $ nextHistory sess)
+    , ((V.EvKey V.KPageUp []), \sess -> continue $ pageUp sess)
+    , ((V.EvKey V.KPageDown []), \sess -> continue $ pageDown sess)
+    , ((V.EvKey V.KUp []), \sess -> continue $ historyOlder sess)
+    , ((V.EvKey V.KDown []), \sess -> continue $ historyNewer sess)
+    ] ++ map rawKeyBinding rawKeys)
 
 -- Handle UI and other app events.
 handleEvent :: Sess -> BrickEvent () RecvEvent -> EventM () (Next Sess)
