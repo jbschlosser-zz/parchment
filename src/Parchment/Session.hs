@@ -50,6 +50,7 @@ data Sess = Sess {
     , _esc_seq_state :: ParseState BS.ByteString
     , _char_attr :: V.Attr
     , _scroll_loc :: Int
+    , _scroll_limit :: Int
     , _history :: [String]
     , _history_loc :: Int
     }
@@ -68,6 +69,7 @@ initialSession q bindings =
         , _esc_seq_state = NotInProgress
         , _char_attr = V.defAttr
         , _scroll_loc = 0
+        , _scroll_limit = 10000 -- lines in scrollback buffer
         , _history = [""]
         , _history_loc = 0
         }
@@ -143,7 +145,7 @@ handleServerByte sess b =
                          NotInProgress -> do
                              sess <- get
                              put (sess & scrollback .~ addScrollbackChar
-                                 (_scrollback sess) (Fchar
+                                 (_scrollback sess) (_scroll_limit sess) (Fchar
                                      { _ch = BSC.head . BS.singleton $ b
                                      , _attr = (_char_attr sess)}))
                              return ()
@@ -156,11 +158,14 @@ handleServerByte sess b =
                 _ -> return ()
         ) sess
 
-addScrollbackChar :: [[Fchar]] -> Fchar -> [[Fchar]]
-addScrollbackChar sb c =
+addScrollbackChar :: [[Fchar]] -> Int -> Fchar -> [[Fchar]]
+addScrollbackChar sb limit c =
     if (_ch c) == '\n' then
         -- Add new empty line.
-        sb ++ [[]]
+        if length sb >= limit then
+            (tail sb) ++ [[]]
+        else
+            sb ++ [[]]
     else if (_ch c) == '\r' then
         sb
     else if length sb == 0 then
