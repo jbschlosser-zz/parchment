@@ -8,6 +8,8 @@ module Parchment.Session
     , delKey
     , sendToServer
     , clearInputLine
+    , writeScrollback
+    , colorize
     , getInput
     , nextHistory
     , receiveServerData
@@ -91,6 +93,13 @@ getInput sess = flip (^.) (history . ix (sess ^. history_loc)) $ sess
 clearInputLine :: Sess -> Sess
 clearInputLine sess = sess & history . ix (sess ^. history_loc) .~ "" & cursor .~ 0
 
+writeScrollback :: [Fchar] -> Sess -> Sess
+writeScrollback str sess = sess & scrollback .~
+    foldl' (addScrollbackChar $ sess ^. scroll_limit) (sess ^. scrollback) str
+
+colorize :: V.Color -> String -> [Fchar]
+colorize color str = map (\c -> Fchar {_ch = c, _attr = V.withForeColor defAttr color}) str 
+
 scrollLines :: Int -> Sess -> Sess
 scrollLines n sess = sess & scroll_loc %~
     (\sl -> clampExclusive 0 (length $ sess ^. scrollback) $ sl + n)
@@ -145,7 +154,7 @@ handleServerByte sess b =
                          NotInProgress -> do
                              sess <- get
                              put (sess & scrollback .~ addScrollbackChar
-                                 (_scrollback sess) (_scroll_limit sess) (Fchar
+                                 (_scroll_limit sess) (_scrollback sess) (Fchar
                                      { _ch = BSC.head . BS.singleton $ b
                                      , _attr = (_char_attr sess)}))
                              return ()
@@ -158,8 +167,8 @@ handleServerByte sess b =
                 _ -> return ()
         ) sess
 
-addScrollbackChar :: [[Fchar]] -> Int -> Fchar -> [[Fchar]]
-addScrollbackChar sb limit c =
+addScrollbackChar :: Int -> [[Fchar]] -> Fchar -> [[Fchar]]
+addScrollbackChar limit sb c =
     if (_ch c) == '\n' then
         -- Add new empty line.
         if length sb >= limit then

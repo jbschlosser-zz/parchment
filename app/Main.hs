@@ -65,7 +65,7 @@ keyBindings = fromList
     , ((V.EvKey V.KBS []), \sess -> continue $ delKey sess)
     , ((V.EvKey V.KEnter []), \sess -> do
         sess <- liftIO $ sendToServer (getInput sess) sess
-        continue $ nextHistory sess)
+        continue $ nextHistory $ writeScrollback (colorize V.yellow $ getInput sess ++ ['\n']) sess)
     , ((V.EvKey V.KPageUp []), \sess -> continue $ pageUp sess)
     , ((V.EvKey V.KPageDown []), \sess -> continue $ pageDown sess)
     , ((V.EvKey V.KUp []), \sess -> continue $ historyOlder sess)
