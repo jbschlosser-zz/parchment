@@ -9,7 +9,9 @@ module Parchment.Session
     , sendToServer
     , clearInputLine
     , writeScrollback
+    , writeScrollbackLn
     , colorize
+    , defaultColor
     , getInput
     , nextHistory
     , receiveServerData
@@ -19,6 +21,7 @@ module Parchment.Session
     , historyOlder
     , historyNewer
     , scrollHistory
+    , foldFuncList
     ) where
 
 import Brick.Types (EventM, Next)
@@ -101,8 +104,14 @@ writeScrollback :: [Fchar] -> Sess -> Sess
 writeScrollback str sess = sess & scrollback .~
     foldl' (addScrollbackChar $ sess ^. scroll_limit) (sess ^. scrollback) str
 
+writeScrollbackLn :: [Fchar] -> Sess -> Sess
+writeScrollbackLn str = writeScrollback (str ++ [Fchar { _ch = '\n', _attr = defAttr}])
+
 colorize :: V.Color -> String -> [Fchar]
 colorize color str = map (\c -> Fchar {_ch = c, _attr = V.withForeColor defAttr color}) str 
+
+defaultColor :: String -> [Fchar]
+defaultColor str = map (\c -> Fchar {_ch = c, _attr = defAttr}) str 
 
 scrollLines :: Int -> Sess -> Sess
 scrollLines n sess = sess & scroll_loc %~

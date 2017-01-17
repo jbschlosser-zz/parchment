@@ -30,6 +30,7 @@ import Data.Text.Markup ((@@), Markup)
 import qualified Graphics.Vty as V
 import Language.Scheme.Core
 import Language.Scheme.Types
+import Language.Scheme.Variables
 import Lens.Micro ((.~), (^.), (&), (%~), over)
 import Network (withSocketsDo)
 import Parchment.Parsing
@@ -47,8 +48,8 @@ main = withSocketsDo $ void $ do
     eventChan <- newChan
     (scmEnv, configErr) <- loadConfig
     let sess = (case configErr of
-                    Just err -> writeScrollback $ colorize V.red $
-                        "Config error: " ++ err ++ ['\n']
+                    Just err -> writeScrollbackLn $ colorize V.red $
+                        "Config error: " ++ err
                     Nothing -> id) $ initialSession send_queue keyBindings scmEnv
     tid <- forkIO $ runTCPClient (clientSettings 4000 (BSC.pack "127.0.0.1")) $ \server ->
         void $ concurrently
@@ -70,35 +71,48 @@ app =
 
 -- Key bindings.
 keyBindings = fromList
-    ([ ((V.EvKey V.KEsc []), \sess -> halt sess)
-    , ((V.EvKey V.KBS []), \sess -> continue $ delKey sess)
+    ([ ((V.EvKey V.KEsc []), halt)
+    , ((V.EvKey V.KBS []), continue . delKey)
     , ((V.EvKey V.KEnter []), \sess -> do
         sess <- liftIO $ sendToServer (getInput sess) sess
-        continue $ nextHistory $ writeScrollback (colorize V.yellow $ getInput sess ++ ['\n']) sess)
-    , ((V.EvKey V.KPageUp []), \sess -> continue $ pageUp sess)
-    , ((V.EvKey V.KPageDown []), \sess -> continue $ pageDown sess)
-    , ((V.EvKey V.KUp []), \sess -> continue $ historyOlder sess)
-    , ((V.EvKey V.KDown []), \sess -> continue $ historyNewer sess)
+        continue $ nextHistory $ writeScrollbackLn
+            (colorize V.yellow $ getInput sess) sess)
+    , ((V.EvKey V.KPageUp []), continue . pageUp)
+    , ((V.EvKey V.KPageDown []), continue . pageDown)
+    , ((V.EvKey V.KUp []), continue . historyOlder)
+    , ((V.EvKey V.KDown []), continue . historyNewer)
+    , ((V.EvKey (V.KChar 'u') [V.MCtrl]), continue . clearInputLine)
     , ((V.EvKey (V.KFun 12) []), \sess -> do
         let input = getInput sess
         let to_eval = List [Atom "send-hook", String input]
         res <- liftIO $ evalLisp' (_scm_env sess) to_eval
-        let str_res = case res of
-                Right l -> colorize V.green $ show l ++ ['\n']
-                Left err -> colorize V.red $ show err ++ ['\n']
-        continue $ writeScrollback str_res sess)
+        case res of
+             Right l -> do
+                 case fromOpaque l of
+                      Right func -> continue . func $ sess
+                      Left err -> case l of
+                                       List lst -> continue $ flip foldFuncList sess $
+                                           map opaqueToSessFunc lst
+                                       _ -> continue $ writeScrollbackLn
+                                                (colorize V.red "Wrong return value") sess
+             Left err -> continue $ flip writeScrollbackLn sess $ colorize V.red $ show err)
     ] ++ map rawKeyBinding rawKeys)
+    where opaqueToSessFunc lv = case fromOpaque lv of
+                                     Right f -> f
+                                     Left err -> writeScrollbackLn (colorize V.red $
+                                         "Error: " ++ (show err))
 
 -- Handle UI and other app events.
 handleEvent :: Sess -> BrickEvent () RecvEvent -> EventM () (Next Sess)
-handleEvent st (VtyEvent e) =
-    case Map.lookup e (_bindings st) of
-        Just b -> b st
-        Nothing -> continue st
-handleEvent st (AppEvent e) =
+handleEvent sess (VtyEvent e) =
+    case Map.lookup e (_bindings sess) of
+        Just b -> b sess
+        Nothing -> continue $ flip writeScrollbackLn sess $
+            colorize V.magenta $ "No binding found: " ++ show e
+handleEvent sess (AppEvent e) =
     case e of
-        RecvEvent bs -> continue $ receiveServerData st bs
-handleEvent st _ = continue st
+        RecvEvent bs -> continue $ receiveServerData sess bs
+handleEvent sess _ = continue sess
 
 -- Draw the UI.
 drawUI :: Sess -> [Widget()]
@@ -129,7 +143,19 @@ drawScrollback lines scroll =
 -- Loads the config file. Returns the environment and optionally any errors.
 loadConfig :: IO (Env, Maybe String)
 loadConfig = do
-    scmEnv <- r5rsEnv
+    scmEnv <- r5rsEnv >>= flip extendEnv
+        [ ((varNamespace, "del-key"), toOpaque delKey)
+        , ((varNamespace, "clear-input-line"), toOpaque clearInputLine)
+        , ((varNamespace, "page-up"), toOpaque pageUp)
+        , ((varNamespace, "page-down"), toOpaque pageDown)
+        , ((varNamespace, "next-history"), toOpaque nextHistory)
+        , ((varNamespace, "history-older"), toOpaque historyOlder)
+        , ((varNamespace, "history-newer"), toOpaque historyNewer)
+        , ((varNamespace, "scroll-history"), PrimitiveFunc scrollHistoryWrapper)
+        , ((varNamespace, "scroll-lines"), PrimitiveFunc scrollLinesWrapper)
+        , ((varNamespace, "print"), PrimitiveFunc writeScrollbackWrapper)
+        , ((varNamespace, "println"), PrimitiveFunc writeScrollbackLnWrapper)
+        , ((varNamespace, "add-key"), PrimitiveFunc addKeyWrapper)]
     configPath <- getUserConfigFile "parchment" "config.scm"
     configFileContents <- tryIOError $ readFile configPath
     let (conf, err) = case configFileContents of
@@ -138,6 +164,47 @@ loadConfig = do
     -- TODO: Proper error handling here.
     evalString scmEnv conf
     return (scmEnv, err)
+
+-- === BINDING WRAPPERS. ===
+-- TODO: Find a less repetitive way to do this.
+addKeyWrapper :: [LispVal] -> ThrowsError LispVal
+addKeyWrapper xs | length xs == 1 =
+    case head xs of
+         Char c -> Right $ toOpaque $ addKey c
+         _ -> Left $ Default "Expected a character"
+addKeyWrapper _ = Left $ Default "Expected a character"
+
+scrollHistoryWrapper :: [LispVal] -> ThrowsError LispVal
+scrollHistoryWrapper xs | length xs == 1 =
+    case head xs of
+         Number i -> Right $ toOpaque $ scrollHistory $ fromIntegral i
+         _ -> Left $ Default "Expected a number"
+scrollHistoryWrapper _ = Left $ Default "Expected a number"
+
+scrollLinesWrapper :: [LispVal] -> ThrowsError LispVal
+scrollLinesWrapper xs | length xs == 1 =
+    case head xs of
+         Number i -> Right $ toOpaque $ scrollLines $ fromIntegral i
+         _ -> Left $ Default "Expected a number"
+scrollLinesWrapper _ = Left $ Default "Expected a number"
+
+writeScrollbackWrapper :: [LispVal] -> ThrowsError LispVal
+writeScrollbackWrapper xs | length xs == 1 =
+    case fromOpaque (head xs) of
+         Right fc -> Right $ toOpaque $ writeScrollback fc
+         Left e -> case (head xs) of
+                        String s -> Right $ toOpaque $ writeScrollback $ defaultColor s
+                        _ -> Left $ Default "Expected a list of formatted chars"
+writeScrollbackWrapper _ = Left $ Default "Expected a list of formatted chars"
+
+writeScrollbackLnWrapper :: [LispVal] -> ThrowsError LispVal
+writeScrollbackLnWrapper xs | length xs == 1 =
+    case fromOpaque (head xs) of
+         Right fc -> Right $ toOpaque $ writeScrollbackLn fc
+         Left e -> case (head xs) of
+                        String s -> Right $ toOpaque $ writeScrollbackLn $ defaultColor s
+                        _ -> Left $ Default "Expected a list of formatted chars"
+writeScrollbackLnWrapper _ = Left $ Default "Expected a list of formatted chars"
 
 -- Creates a binding for a raw char key.
 rawKeyBinding :: Char -> (V.Event, (Sess -> EventM () (Next Sess)))
