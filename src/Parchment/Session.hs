@@ -33,6 +33,8 @@ import qualified Data.Map.Lazy as Map
 import Data.Monoid (appEndo, Endo(..))
 import Data.Word (Word8)
 import Graphics.Vty as V
+import Language.Scheme.Core
+import Language.Scheme.Types
 import Lens.Micro ((.~), (^.), (&), (%~), over, ix)
 import Lens.Micro.TH (makeLenses)
 import Parchment.Parsing
@@ -55,13 +57,14 @@ data Sess = Sess {
     , _scroll_limit :: Int
     , _history :: [String]
     , _history_loc :: Int
+    , _scm_env :: Env
     }
 makeLenses ''Sess
 
 -- Initial state of the session data.
 initialSession :: TQueue BS.ByteString ->
-    Map.Map V.Event (Sess -> EventM () (Next Sess)) -> Sess
-initialSession q bindings =
+    Map.Map V.Event (Sess -> EventM () (Next Sess)) -> Env -> Sess
+initialSession q bindings scm_env =
     Sess {
         _scrollback = [[]]
         , _cursor = 0
@@ -74,6 +77,7 @@ initialSession q bindings =
         , _scroll_limit = 10000 -- lines in scrollback buffer
         , _history = [""]
         , _history_loc = 0
+        , _scm_env = scm_env
         }
 
 -- === ACTIONS ===

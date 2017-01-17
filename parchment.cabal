@@ -23,6 +23,7 @@ library
                      , bytestring >= 0.10
                      , brick
                      , containers
+                     , husk-scheme
                      , parsec
                      , vty
                      , microlens
@@ -50,12 +51,14 @@ executable parchment
                      , conduit-extra
                      , conduit-combinators
                      , async
+                     , husk-scheme
                      , io-streams
                      , stm
                      , stm-conduit
                      , split
                      , mtl
                      , parsec
+                     , xdg-basedir
   default-language:    Haskell2010
 
 test-suite parchment-test
