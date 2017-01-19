@@ -89,18 +89,14 @@ keyBindings = fromList
         case res of
              Right l -> do
                  case fromOpaque l of
-                      Right func -> continue . func $ sess
+                      Right func -> (liftIO . func $ sess) >>= continue
                       Left err -> case l of
-                                       List lst -> continue $ flip foldFuncList sess $
-                                           map opaqueToSessFunc lst
-                                       _ -> continue $ writeScrollbackLn
-                                                (colorize V.red "Wrong return value") sess
+                                       List lst -> (liftIO . flip chainM sess $
+                                                    map opaqueToSessFunc lst) >>= continue
+                                       _ -> continue $ flip writeScrollbackLn sess $
+                                                colorize V.red "Wrong return value"
              Left err -> continue $ flip writeScrollbackLn sess $ colorize V.red $ show err)
     ] ++ map rawKeyBinding rawKeys)
-    where opaqueToSessFunc lv = case fromOpaque lv of
-                                     Right f -> f
-                                     Left err -> writeScrollbackLn (colorize V.red $
-                                         "Error: " ++ (show err))
 
 -- Handle UI and other app events.
 handleEvent :: Sess -> BrickEvent () RecvEvent -> EventM () (Next Sess)
@@ -144,7 +140,8 @@ drawScrollback lines scroll =
 loadConfig :: IO (Env, Maybe String)
 loadConfig = do
     scmEnv <- r5rsEnv >>= flip extendEnv
-        [ ((varNamespace, "del-key"), toOpaque delKey)
+        [ ((varNamespace, "send"), PrimitiveFunc sendToServerWrapper)
+        , ((varNamespace, "del-key"), toOpaque delKey)
         , ((varNamespace, "clear-input-line"), toOpaque clearInputLine)
         , ((varNamespace, "page-up"), toOpaque pageUp)
         , ((varNamespace, "page-down"), toOpaque pageDown)
@@ -206,6 +203,13 @@ writeScrollbackLnWrapper xs | length xs == 1 =
                         _ -> Left $ Default "Expected a list of formatted chars"
 writeScrollbackLnWrapper _ = Left $ Default "Expected a list of formatted chars"
 
+sendToServerWrapper :: [LispVal] -> ThrowsError LispVal
+sendToServerWrapper xs | length xs == 1 =
+    case (head xs) of
+         String s -> Right $ toOpaque $ sendToServer s
+         _ -> Left $ Default "Expected a string"
+sendToServerWrapper _ = Left $ Default "Expected a string"
+
 -- Creates a binding for a raw char key.
 rawKeyBinding :: Char -> (V.Event, (Sess -> EventM () (Next Sess)))
 rawKeyBinding c = ((V.EvKey (V.KChar c) []), \st -> continue $ addKey c st)
@@ -219,3 +223,17 @@ chanSink :: MonadIO m => chan -> (chan -> a -> IO ()) -> (chan -> IO ()) -> Sink
 chanSink ch writer closer = do
     CL.mapM_ $ liftIO . writer ch
     liftIO $ closer ch
+
+-- Chain a list of monad functions, with each result feeding into the next.
+chainM :: (Monad m) => [a -> m a] -> a -> m a
+chainM [] a = return a
+chainM (x:xs) a = x a >>= chainM xs
+
+-- Convert an opaque lisp value to a session-transforming action.
+opaqueToSessFunc :: LispVal -> Sess -> IO Sess
+opaqueToSessFunc lv = case fromOpaque lv of
+                           Right f -> f
+                           Left err -> case fromOpaque lv of
+                                            Right f -> return . f
+                                            Left err -> return . (writeScrollbackLn
+                                                (colorize V.red $ "Error: " ++ (show err)))
