@@ -35,6 +35,7 @@ import Lens.Micro ((.~), (^.), (&), (%~), over)
 import Network (withSocketsDo)
 import Parchment.Parsing
 import Parchment.Session
+import ScriptInterface
 import System.Environment.XDG.BaseDir
 import System.IO.Error
 
@@ -135,24 +136,11 @@ drawScrollback lines scroll =
           drawScrollbackLine s = markup . mconcat . map fcharToMarkup $ s
           fcharToMarkup = \t -> (singleton $ _ch t) @@ (_attr t)
 
--- Helper functions.
+-- === HELPER FUNCTIONS. ===
 -- Loads the config file. Returns the environment and optionally any errors.
 loadConfig :: IO (Env, Maybe String)
 loadConfig = do
-    scmEnv <- r5rsEnv >>= flip extendEnv
-        [ ((varNamespace, "send"), PrimitiveFunc sendToServerWrapper)
-        , ((varNamespace, "del-key"), toOpaque delKey)
-        , ((varNamespace, "clear-input-line"), toOpaque clearInputLine)
-        , ((varNamespace, "page-up"), toOpaque pageUp)
-        , ((varNamespace, "page-down"), toOpaque pageDown)
-        , ((varNamespace, "next-history"), toOpaque nextHistory)
-        , ((varNamespace, "history-older"), toOpaque historyOlder)
-        , ((varNamespace, "history-newer"), toOpaque historyNewer)
-        , ((varNamespace, "scroll-history"), PrimitiveFunc scrollHistoryWrapper)
-        , ((varNamespace, "scroll-lines"), PrimitiveFunc scrollLinesWrapper)
-        , ((varNamespace, "print"), PrimitiveFunc writeScrollbackWrapper)
-        , ((varNamespace, "println"), PrimitiveFunc writeScrollbackLnWrapper)
-        , ((varNamespace, "add-key"), PrimitiveFunc addKeyWrapper)]
+    scmEnv <- scriptInterface
     configPath <- getUserConfigFile "parchment" "config.scm"
     configFileContents <- tryIOError $ readFile configPath
     let (conf, err) = case configFileContents of
@@ -161,54 +149,6 @@ loadConfig = do
     -- TODO: Proper error handling here.
     evalString scmEnv conf
     return (scmEnv, err)
-
--- === BINDING WRAPPERS. ===
--- TODO: Find a less repetitive way to do this.
-addKeyWrapper :: [LispVal] -> ThrowsError LispVal
-addKeyWrapper xs | length xs == 1 =
-    case head xs of
-         Char c -> Right $ toOpaque $ addKey c
-         _ -> Left $ Default "Expected a character"
-addKeyWrapper _ = Left $ Default "Expected a character"
-
-scrollHistoryWrapper :: [LispVal] -> ThrowsError LispVal
-scrollHistoryWrapper xs | length xs == 1 =
-    case head xs of
-         Number i -> Right $ toOpaque $ scrollHistory $ fromIntegral i
-         _ -> Left $ Default "Expected a number"
-scrollHistoryWrapper _ = Left $ Default "Expected a number"
-
-scrollLinesWrapper :: [LispVal] -> ThrowsError LispVal
-scrollLinesWrapper xs | length xs == 1 =
-    case head xs of
-         Number i -> Right $ toOpaque $ scrollLines $ fromIntegral i
-         _ -> Left $ Default "Expected a number"
-scrollLinesWrapper _ = Left $ Default "Expected a number"
-
-writeScrollbackWrapper :: [LispVal] -> ThrowsError LispVal
-writeScrollbackWrapper xs | length xs == 1 =
-    case fromOpaque (head xs) of
-         Right fc -> Right $ toOpaque $ writeScrollback fc
-         Left e -> case (head xs) of
-                        String s -> Right $ toOpaque $ writeScrollback $ defaultColor s
-                        _ -> Left $ Default "Expected a list of formatted chars"
-writeScrollbackWrapper _ = Left $ Default "Expected a list of formatted chars"
-
-writeScrollbackLnWrapper :: [LispVal] -> ThrowsError LispVal
-writeScrollbackLnWrapper xs | length xs == 1 =
-    case fromOpaque (head xs) of
-         Right fc -> Right $ toOpaque $ writeScrollbackLn fc
-         Left e -> case (head xs) of
-                        String s -> Right $ toOpaque $ writeScrollbackLn $ defaultColor s
-                        _ -> Left $ Default "Expected a list of formatted chars"
-writeScrollbackLnWrapper _ = Left $ Default "Expected a list of formatted chars"
-
-sendToServerWrapper :: [LispVal] -> ThrowsError LispVal
-sendToServerWrapper xs | length xs == 1 =
-    case (head xs) of
-         String s -> Right $ toOpaque $ sendToServer s
-         _ -> Left $ Default "Expected a string"
-sendToServerWrapper _ = Left $ Default "Expected a string"
 
 -- Creates a binding for a raw char key.
 rawKeyBinding :: Char -> (V.Event, (Sess -> EventM () (Next Sess)))
