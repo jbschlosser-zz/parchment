@@ -12,6 +12,7 @@ module Parchment.Session
     , writeScrollbackLn
     , colorize
     , defaultColor
+    , formatStr
     , getInput
     , nextHistory
     , receiveServerData
@@ -35,13 +36,13 @@ import Data.List (foldl')
 import qualified Data.Map.Lazy as Map
 import Data.Monoid (appEndo, Endo(..))
 import Data.Word (Word8)
-import Graphics.Vty as V
+import qualified Graphics.Vty as V
 import Language.Scheme.Core
 import Language.Scheme.Types
 import Lens.Micro ((.~), (^.), (&), (%~), over, ix)
 import Lens.Micro.TH (makeLenses)
 import Parchment.Parsing
-import Text.Parsec (parse)
+import Text.Parsec hiding (Error, getInput)
 
 data Fchar = Fchar {_ch :: Char, _attr :: V.Attr}
 instance Show Fchar where
@@ -105,13 +106,52 @@ writeScrollback str sess = sess & scrollback .~
     foldl' (addScrollbackChar $ sess ^. scroll_limit) (sess ^. scrollback) str
 
 writeScrollbackLn :: [Fchar] -> Sess -> Sess
-writeScrollbackLn str = writeScrollback (str ++ [Fchar { _ch = '\n', _attr = defAttr}])
+writeScrollbackLn str = writeScrollback (str ++ [Fchar { _ch = '\n', _attr = V.defAttr}])
 
 colorize :: V.Color -> String -> [Fchar]
-colorize color str = map (\c -> Fchar {_ch = c, _attr = V.withForeColor defAttr color}) str 
+colorize color str = map (\c ->
+                          Fchar {_ch = c, _attr = V.withForeColor V.defAttr color}) str 
+
+applyAttr :: V.Attr -> String -> [Fchar]
+applyAttr a str = map (\c -> Fchar {_ch = c, _attr = a}) str 
 
 defaultColor :: String -> [Fchar]
-defaultColor str = map (\c -> Fchar {_ch = c, _attr = defAttr}) str 
+defaultColor str = map (\c -> Fchar {_ch = c, _attr = V.defAttr}) str 
+
+formatStr :: String -> [Fchar]
+formatStr s = case runParser formatStrParser V.defAttr "source" s of
+                   -- TODO: Maybe better error handling?
+                   Left err -> defaultColor $ s
+                   Right fc -> foldr (++) [] fc
+
+-- Matches a format part.
+formatPartParser :: Parsec String V.Attr String
+formatPartParser = do
+    char '{'
+    code <- oneOf "xbrgyumcwH{"
+    attr <- case code of
+                   'x' -> return V.defAttr
+                   'b' -> return $ V.withForeColor V.defAttr V.black
+                   'r' -> return $ V.withForeColor V.defAttr V.red
+                   'g' -> return $ V.withForeColor V.defAttr V.green
+                   'y' -> return $ V.withForeColor V.defAttr V.yellow
+                   'u' -> return $ V.withForeColor V.defAttr V.blue
+                   'm' -> return $ V.withForeColor V.defAttr V.magenta
+                   'c' -> return $ V.withForeColor V.defAttr V.cyan
+                   'w' -> return $ V.withForeColor V.defAttr V.white
+                   _ -> getState
+    putState attr
+    let chars = case code of
+                     '{' -> "{"
+                     _ -> ""
+    return chars
+
+-- Matches a whole string with optional format parts.
+formatStrParser :: Parsec String V.Attr [[Fchar]]
+formatStrParser = many $ do
+    part <- formatPartParser <|> many1 (noneOf "{")
+    state <- getState
+    return $ applyAttr state part
 
 scrollLines :: Int -> Sess -> Sess
 scrollLines n sess = sess & scroll_loc %~

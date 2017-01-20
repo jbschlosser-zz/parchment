@@ -20,7 +20,7 @@ scriptInterface = r5rsEnv >>= flip extendEnv
     , ((varNamespace, "scroll-history"), PrimitiveFunc scrollHistoryWrapper)
     , ((varNamespace, "scroll-lines"), PrimitiveFunc scrollLinesWrapper)
     , ((varNamespace, "print"), PrimitiveFunc writeScrollbackWrapper)
-    , ((varNamespace, "println"), PrimitiveFunc writeScrollbackLnWrapper)
+    , ((varNamespace, "println"), PrimitiveFunc newWriteScrollbackLnWrapper)
     , ((varNamespace, "add-key"), PrimitiveFunc addKeyWrapper)]
 
 -- === BINDING WRAPPERS. ===
@@ -63,6 +63,13 @@ writeScrollbackLnWrapper xs | length xs == 1 =
                         String s -> Right $ toOpaque $ writeScrollbackLn $ defaultColor s
                         _ -> Left $ Default "Expected a list of formatted chars"
 writeScrollbackLnWrapper _ = Left $ Default "Expected a list of formatted chars"
+
+newWriteScrollbackLnWrapper :: [LispVal] -> ThrowsError LispVal
+newWriteScrollbackLnWrapper xs | length xs == 1 =
+    case (head xs) of
+         String s -> Right $ toOpaque $ writeScrollbackLn $ formatStr s
+         _ -> Left $ Default "Expected a string"
+newWriteScrollbackLnWrapper _ = Left $ Default "Expected a string"
 
 sendToServerWrapper :: [LispVal] -> ThrowsError LispVal
 sendToServerWrapper xs | length xs == 1 =
