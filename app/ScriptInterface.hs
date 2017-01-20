@@ -21,7 +21,7 @@ scriptInterface = r5rsEnv >>= flip extendEnv
     , ((varNamespace, "scroll-history"), PrimitiveFunc scrollHistoryWrapper)
     , ((varNamespace, "scroll-lines"), PrimitiveFunc scrollLinesWrapper)
     , ((varNamespace, "print"), PrimitiveFunc writeScrollbackWrapper)
-    , ((varNamespace, "println"), PrimitiveFunc newWriteScrollbackLnWrapper)
+    , ((varNamespace, "println"), PrimitiveFunc writeScrollbackLnWrapper)
     , ((varNamespace, "add-key"), PrimitiveFunc addKeyWrapper)]
 
 -- === BINDING WRAPPERS. ===
@@ -49,28 +49,17 @@ scrollLinesWrapper _ = Left $ Default "Expected a number"
 
 writeScrollbackWrapper :: [LispVal] -> ThrowsError LispVal
 writeScrollbackWrapper xs | length xs == 1 =
-    case fromOpaque (head xs) of
-         Right fc -> Right $ toOpaque $ writeScrollback fc
-         Left e -> case (head xs) of
-                        String s -> Right $ toOpaque $ writeScrollback $ defaultColor s
-                        _ -> Left $ Default "Expected a list of formatted chars"
-writeScrollbackWrapper _ = Left $ Default "Expected a list of formatted chars"
+    case (head xs) of
+         String s -> Right $ toOpaque $ writeScrollback $ formatStr s
+         _ -> Left $ Default "Expected a string"
+writeScrollbackWrapper _ = Left $ Default "Expected a string"
 
 writeScrollbackLnWrapper :: [LispVal] -> ThrowsError LispVal
 writeScrollbackLnWrapper xs | length xs == 1 =
-    case fromOpaque (head xs) of
-         Right fc -> Right $ toOpaque $ writeScrollbackLn fc
-         Left e -> case (head xs) of
-                        String s -> Right $ toOpaque $ writeScrollbackLn $ defaultColor s
-                        _ -> Left $ Default "Expected a list of formatted chars"
-writeScrollbackLnWrapper _ = Left $ Default "Expected a list of formatted chars"
-
-newWriteScrollbackLnWrapper :: [LispVal] -> ThrowsError LispVal
-newWriteScrollbackLnWrapper xs | length xs == 1 =
     case (head xs) of
          String s -> Right $ toOpaque $ writeScrollbackLn $ formatStr s
          _ -> Left $ Default "Expected a string"
-newWriteScrollbackLnWrapper _ = Left $ Default "Expected a string"
+writeScrollbackLnWrapper _ = Left $ Default "Expected a string"
 
 sendToServerWrapper :: [LispVal] -> ThrowsError LispVal
 sendToServerWrapper xs | length xs == 1 =
