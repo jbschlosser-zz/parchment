@@ -2,23 +2,20 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Main where
 
-import Brick.AttrMap (attrMap, AttrMap)
-import Brick.Main (App(..), defaultMain, customMain, resizeOrQuit, neverShowCursor,
-                   showFirstCursor, halt, continue, suspendAndResume)
-import Brick.Markup (markup, (@?))
-import Brick.Types (Widget(..), Padding(..), Location(..), Next(..), EventM, BrickEvent(..),
-                    getContext, Size(..), Result(..), availHeightL)
-import Brick.Widgets.Core ((<=>), (<+>), padLeft, padTop, padRight, padBottom, str, vBox,
-                           hBox, showCursor, vLimit, fill)
+import Brick.AttrMap (attrMap)
+import Brick.Main (App(..), customMain, showFirstCursor, halt, continue)
+import Brick.Markup (markup)
+import Brick.Types (Widget(..), Padding(..), Location(..), Next, EventM, BrickEvent(..),
+                    getContext, Size(..), availHeightL)
+import Brick.Widgets.Core ((<=>), padBottom, str, vBox, showCursor)
 import Brick.Widgets.Border (hBorder)
 import Conduit
-import Control.Concurrent (forkIO, newChan, Chan, writeChan)
+import Control.Concurrent (forkIO, newChan, writeChan)
 import Control.Concurrent.Async (concurrently)
 import Control.Concurrent.STM.TQueue
 import Control.Monad (void)
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString as BS
-import Data.Conduit
 import qualified Data.Conduit.List as CL
 import Data.Conduit.Network
 import Data.Conduit.TQueue (sourceTQueue)
@@ -26,15 +23,13 @@ import Data.Default
 import Data.Map (fromList)
 import qualified Data.Map.Lazy as Map
 import Data.Text (singleton)
-import Data.Text.Markup ((@@), Markup)
+import Data.Text.Markup ((@@))
 import qualified Graphics.Vty as V
 import Language.Scheme.Core
 import Language.Scheme.Types
-import Language.Scheme.Variables
-import Lens.Micro ((.~), (^.), (&), (%~), over)
+import Lens.Micro ((^.))
 import Network (withSocketsDo)
 import Parchment.Fchar
-import Parchment.Parsing
 import Parchment.Session
 import ScriptInterface
 import System.Environment.XDG.BaseDir
@@ -46,16 +41,15 @@ data RecvEvent = RecvEvent BS.ByteString
 main :: IO ()
 main = withSocketsDo $ void $ do
     send_queue <- newTQueueIO
-    recv_queue <- newTQueueIO
     eventChan <- newChan
     (scmEnv, configErr) <- loadConfig
     let sess = (case configErr of
                     Just err -> writeScrollbackLn $ colorize V.red $
                         "Config error: " ++ err
                     Nothing -> id) $ initialSession send_queue keyBindings scmEnv
-    tid <- forkIO $ runTCPClient (clientSettings 4000 (BSC.pack "127.0.0.1")) $ \server ->
+    forkIO $ runTCPClient (clientSettings 4000 (BSC.pack "127.0.0.1")) $ \server ->
         void $ concurrently
-            (appSource server $$ chanSink eventChan chanWriteRecvEvent (\c -> return ()))
+            (appSource server $$ chanSink eventChan chanWriteRecvEvent (\_ -> return ()))
             (sourceTQueue send_queue $$ appSink server)
     customMain (V.mkVty def) (Just eventChan) app sess
     where
@@ -92,11 +86,11 @@ keyBindings = fromList
              Right l -> do
                  case fromOpaque l of
                       Right func -> (liftIO . func $ sess) >>= continue
-                      Left err -> case l of
-                                       List lst -> (liftIO . flip chainM sess $
-                                                    map opaqueToSessFunc lst) >>= continue
-                                       _ -> continue $ flip writeScrollbackLn sess $
-                                                colorize V.red "Wrong return value"
+                      Left _ -> case l of
+                                     List lst -> (liftIO . flip chainM sess $
+                                         map opaqueToSessFunc lst) >>= continue
+                                     _ -> continue $ flip writeScrollbackLn sess $
+                                         colorize V.red "Wrong return value"
              Left err -> continue $ flip writeScrollbackLn sess $ colorize V.red $ show err)
     ] ++ map rawKeyBinding rawKeys)
 
@@ -146,7 +140,7 @@ loadConfig = do
     configFileContents <- tryIOError $ readFile configPath
     let (conf, err) = case configFileContents of
                           Right c -> (c, Nothing)
-                          Left c -> ("", Just $ "Could not load config file: " ++ configPath)
+                          Left _ -> ("", Just $ "Could not load config file: " ++ configPath)
     -- TODO: Proper error handling here.
     evalString scmEnv conf
     return (scmEnv, err)
@@ -174,7 +168,7 @@ chainM (x:xs) a = x a >>= chainM xs
 opaqueToSessFunc :: LispVal -> Sess -> IO Sess
 opaqueToSessFunc lv = case fromOpaque lv of
                            Right f -> f
-                           Left err -> case fromOpaque lv of
-                                            Right f -> return . f
-                                            Left err -> return . (writeScrollbackLn
-                                                (colorize V.red $ "Error: " ++ (show err)))
+                           Left _ -> case fromOpaque lv of
+                                          Right f -> return . f
+                                          Left err -> return . (writeScrollbackLn
+                                              (colorize V.red $ "Error: " ++ (show err)))
