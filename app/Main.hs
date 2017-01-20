@@ -33,6 +33,7 @@ import Language.Scheme.Types
 import Language.Scheme.Variables
 import Lens.Micro ((.~), (^.), (&), (%~), over)
 import Network (withSocketsDo)
+import Parchment.Fchar
 import Parchment.Parsing
 import Parchment.Session
 import ScriptInterface

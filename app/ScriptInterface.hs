@@ -5,6 +5,7 @@ module ScriptInterface
 import Language.Scheme.Core
 import Language.Scheme.Types
 import Language.Scheme.Variables
+import Parchment.Fchar
 import Parchment.Session
 
 scriptInterface :: IO Env

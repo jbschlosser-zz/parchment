@@ -5,6 +5,7 @@ import Control.Monad (void)
 import Data.Map (fromList)
 import Lens.Micro ((.~), (^.), (&), (%~), over, ix, Getting)
 import Lens.Micro.TH (makeLenses)
+import Parchment.Fchar
 import Parchment.Parsing
 import Parchment.Session
 import Test.HUnit
