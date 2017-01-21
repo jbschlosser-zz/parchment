@@ -84,13 +84,12 @@ keyBindings = fromList
         res <- liftIO $ evalLisp' (_scm_env sess) to_eval
         case res of
              Right l -> do
-                 case fromOpaque l of
-                      Right func -> (liftIO . func $ sess) >>= continue
-                      Left _ -> case l of
-                                     List lst -> (liftIO . flip chainM sess $
-                                         map opaqueToSessFunc lst) >>= continue
-                                     _ -> continue $ flip writeScrollbackLn sess $
-                                         colorize V.red "Wrong return value"
+                 case l of
+                      List lst -> (liftIO . flip chainM sess $
+                                   map opaqueToSessFunc lst) >>= continue
+                      Opaque _ -> (liftIO $ opaqueToSessFunc l sess) >>= continue
+                      _ -> continue $ flip writeScrollbackLn sess $
+                           colorize V.red "Wrong return value"
              Left err -> continue $ flip writeScrollbackLn sess $ colorize V.red $ show err)
     ] ++ map rawKeyBinding rawKeys)
 
