@@ -33,7 +33,6 @@ import Parchment.Fchar
 import Parchment.Session
 import ScriptInterface
 import System.Environment.XDG.BaseDir
-import System.IO.Error
 
 data RecvEvent = RecvEvent BS.ByteString
 
@@ -86,7 +85,7 @@ keyBindings = fromList
              Right l -> do
                  case l of
                       List lst -> (liftIO . flip chainM sess $
-                                   map opaqueToSessFunc lst) >>= continue
+                                    map opaqueToSessFunc lst) >>= continue
                       Opaque _ -> (liftIO $ opaqueToSessFunc l sess) >>= continue
                       _ -> continue $ flip writeScrollbackLn sess $
                            colorize V.red "Wrong return value"
@@ -98,8 +97,10 @@ handleEvent :: Sess -> BrickEvent () RecvEvent -> EventM () (Next Sess)
 handleEvent sess (VtyEvent e) =
     case Map.lookup e (_bindings sess) of
         Just b -> b sess
-        Nothing -> continue $ flip writeScrollbackLn sess $
-            colorize V.magenta $ "No binding found: " ++ show e
+        Nothing -> case e of
+                        V.EvResize _ _ -> continue sess
+                        _ -> continue $ flip writeScrollbackLn sess $
+                            colorize V.magenta $ "No binding found: " ++ show e
 handleEvent sess (AppEvent e) =
     case e of
         RecvEvent bs -> continue $ receiveServerData sess bs
@@ -136,13 +137,11 @@ loadConfig :: IO (Env, Maybe String)
 loadConfig = do
     scmEnv <- scriptInterface
     configPath <- getUserConfigFile "parchment" "config.scm"
-    configFileContents <- tryIOError $ readFile configPath
-    let (conf, err) = case configFileContents of
-                          Right c -> (c, Nothing)
-                          Left _ -> ("", Just $ "Could not load config file: " ++ configPath)
-    -- TODO: Proper error handling here.
-    evalString scmEnv conf
-    return (scmEnv, err)
+    let conf = List [Atom "include", String configPath]
+    res <- evalLisp' scmEnv conf
+    case res of
+         Left err -> return (scmEnv, Just $ show err)
+         Right _ -> return (scmEnv, Nothing)
 
 -- Creates a binding for a raw char key.
 rawKeyBinding :: Char -> (V.Event, (Sess -> EventM () (Next Sess)))
@@ -157,17 +156,3 @@ chanSink :: MonadIO m => chan -> (chan -> a -> IO ()) -> (chan -> IO ()) -> Sink
 chanSink ch writer closer = do
     CL.mapM_ $ liftIO . writer ch
     liftIO $ closer ch
-
--- Chain a list of monad functions, with each result feeding into the next.
-chainM :: (Monad m) => [a -> m a] -> a -> m a
-chainM [] a = return a
-chainM (x:xs) a = x a >>= chainM xs
-
--- Convert an opaque lisp value to a session-transforming action.
-opaqueToSessFunc :: LispVal -> Sess -> IO Sess
-opaqueToSessFunc lv = case fromOpaque lv of
-                           Right f -> f
-                           Left _ -> case fromOpaque lv of
-                                          Right f -> return . f
-                                          Left err -> return . (writeScrollbackLn
-                                              (colorize V.red $ "Error: " ++ (show err)))
