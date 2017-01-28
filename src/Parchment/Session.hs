@@ -25,7 +25,7 @@ import Brick.Types (EventM, Next)
 import Brick.Util (clamp)
 import Control.Concurrent.STM.TQueue
 import Control.Monad.State (get, put, execState)
-import Control.Monad.STM (atomically, STM)
+import Control.Monad.STM (atomically)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import Data.List (foldl')
@@ -33,9 +33,8 @@ import qualified Data.Map.Lazy as Map
 import Data.Monoid (appEndo, Endo(..))
 import Data.Word (Word8)
 import qualified Graphics.Vty as V
-import Language.Scheme.Core
 import Language.Scheme.Types
-import Lens.Micro ((.~), (^.), (&), (%~), over, ix)
+import Lens.Micro ((.~), (^.), (&), (%~), ix)
 import Lens.Micro.TH (makeLenses)
 import Parchment.Fchar
 import Parchment.Parsing
@@ -131,7 +130,7 @@ historyNewer = scrollHistory 1
 
 sendToServer :: String -> Sess -> IO Sess
 sendToServer str sess = do
-    atomically $ writeTQueue (_send_queue sess) (BSC.pack $ str ++ "\r\n")
+    atomically $ writeTQueue (sess ^. send_queue) (BSC.pack $ str ++ "\r\n")
     return sess
 
 receiveServerData :: Sess -> BS.ByteString -> Sess

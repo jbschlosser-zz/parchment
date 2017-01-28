@@ -65,8 +65,8 @@ app =
         }
 
 -- Key bindings.
-keyBindings = fromList
-    ([ ((V.EvKey V.KEsc []), halt)
+keyBindings = fromList $ map rawKeyBinding rawKeys ++
+    [ ((V.EvKey V.KEsc []), halt)
     , ((V.EvKey V.KBS []), continue . delKey)
     , ((V.EvKey V.KEnter []), \sess -> do
         let input = getInput sess
@@ -85,7 +85,7 @@ keyBindings = fromList
     , ((V.EvKey V.KUp []), continue . historyOlder)
     , ((V.EvKey V.KDown []), continue . historyNewer)
     , ((V.EvKey (V.KChar 'u') [V.MCtrl]), continue . clearInputLine)
-    ] ++ map rawKeyBinding rawKeys)
+    ]
 
 -- Handle UI and other app events.
 handleEvent :: Sess -> BrickEvent () RecvEvent -> EventM () (Next Sess)

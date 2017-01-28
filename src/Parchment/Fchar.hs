@@ -4,18 +4,16 @@ module Parchment.Fchar
     ( Fchar(..)
     , applyAttr
     , colorize
-    , defaultColor
+    , defaultStyle
     , formatStr
     ) where
 
 import qualified Graphics.Vty as V
-import Lens.Micro.TH (makeLenses)
 import Text.Parsec hiding (Error, getInput)
 
 data Fchar = Fchar {_ch :: Char, _attr :: V.Attr}
 instance Show Fchar where
-    show Fchar {_ch = ch, _attr = attr} = show ch
-makeLenses ''Fchar
+    show Fchar {_ch = ch, _attr = _} = show ch
 
 applyAttr :: V.Attr -> String -> [Fchar]
 applyAttr a str = map (\c -> Fchar {_ch = c, _attr = a}) str 
@@ -23,13 +21,13 @@ applyAttr a str = map (\c -> Fchar {_ch = c, _attr = a}) str
 colorize :: V.Color -> String -> [Fchar]
 colorize c = applyAttr (V.withForeColor V.defAttr c)
 
-defaultColor :: String -> [Fchar]
-defaultColor = applyAttr V.defAttr
+defaultStyle :: String -> [Fchar]
+defaultStyle = applyAttr V.defAttr
 
 formatStr :: String -> [Fchar]
 formatStr s = case runParser formatStrParser V.defAttr "source" s of
                    -- TODO: Maybe better error handling?
-                   Left err -> defaultColor $ s
+                   Left _ -> defaultStyle $ s
                    Right fc -> foldr (++) [] fc
 
 -- Matches a format part.
