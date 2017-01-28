@@ -56,35 +56,49 @@
     ;((string=? cmd "reload") ; Reload the config file.
     ; (list (tome:reload-config)
     ;       (tome:write-scrollback "Reloaded the config file.\n")))
+
+    ; Start a new path.
     ((string=? cmd "path")
      (set! saved-path '())
-     do-nothing) ; Start a new path.
+     next-history)
+    ; Add to the path.
     ((string=? cmd "addpath")
-     (set! saved-path (cons "n" saved-path)) ; Start a new path.
-     (println "added"))
-    ((string=? cmd "backtrack") ; Backtrack to the path start.
+     (set! saved-path (cons "n" saved-path))
+     (composite (list (println "added") next-history)))
+    ; Backtrack to the path start.
+    ((string=? cmd "backtrack")
      (let ((backpath saved-path))
        (composite
          (list (message (string-append "Backtracking " (foldr string-append "" backpath)))
                (composite (map full-send (map reverse-dir backpath)))))))
-    (else (println (string-append "{rInvalid command: " cmd)))))
+    ; Invalid command.
+    (else
+      (println (string-append "{rInvalid command: " cmd)))))
 
 ; ===== HOOKS ======
 ; Hook to run when input is sent. Returns an action to perform.
 (define (send-hook input)
   (cond
-    ((string=? input "") (full-send input)) ; Empty input.
+    ; Empty input.
+    ((string=? input "")
+     (full-send input))
+    ; Multiple commands.
     ((string-contains-char input #\;)
-     (composite (map send-hook (string-split input #\;)))) ; Multiple commands.
+     (composite (map send-hook (string-split input #\;))))
+    ; Aliases (recursive).
     ((hash-contains? *aliases* input)
-     (send-hook (hash-get *aliases* input))) ; Aliases (recursive).
-    ((string-prefix? "#" input) ; Command
+     (send-hook (hash-get *aliases* input)))
+    ; Commands.
+    ((string-prefix? "#" input)
      (run-command (string-drop input 1)))
-    ;((string-prefix? "/" input) ; Search.
+    ; Search.
+    ;((string-prefix? "/" input)
     ; (begin
     ;   (search-backwards (substring input 1))
     ;   '())) ; Note that an empty list is returned.
-    (else (full-send input)))) ; Everything else.
+    ; Everything else.
+    (else
+      (full-send input))))
 
 ; Hook to run when data is received from the server. Returns an action
 ; to perform.
