@@ -75,11 +75,10 @@ keyBindings = fromList
         case res of
              Right l -> do
                  case l of
-                      List lst -> (liftIO . flip chainM sess $
-                                    map opaqueToSessFunc lst) >>= continue
                       Opaque _ -> (liftIO $ opaqueToSessFunc l sess) >>= continue
-                      _ -> continue $ flip writeScrollbackLn sess $
-                           colorize V.red "Wrong return value"
+                      x -> continue $ flip writeScrollbackLn sess $
+                           colorize V.red $ "Expected an action from send-hook, found: " ++
+                               (show x)
              Left err -> continue $ flip writeScrollbackLn sess $ colorize V.red $ show err)
     , ((V.EvKey V.KPageUp []), continue . pageUp)
     , ((V.EvKey V.KPageDown []), continue . pageDown)

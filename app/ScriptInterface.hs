@@ -4,6 +4,7 @@ module ScriptInterface
     , chainM
     ) where
 
+import qualified Data.Map as M
 import qualified Graphics.Vty as V
 import Language.Scheme.Core
 import Language.Scheme.Types
@@ -26,7 +27,13 @@ scriptInterface = r5rsEnv >>= flip extendEnv
     , ((varNamespace, "print"), CustFunc writeScrollbackWrapper)
     , ((varNamespace, "println"), CustFunc writeScrollbackLnWrapper)
     , ((varNamespace, "add-key"), CustFunc addKeyWrapper)
-    , ((varNamespace, "action"), CustFunc compositeAction)]
+    , ((varNamespace, "composite"), CustFunc compositeAction)
+    , ((varNamespace, "do-nothing"), toOpaque (id :: Sess -> Sess))
+    , ((varNamespace, "string-repr"), CustFunc stringRepr)
+    , ((varNamespace, "make-hash"), CustFunc makeHash)
+    , ((varNamespace, "hash-contains?"), CustFunc hashContains)
+    , ((varNamespace, "hash-get"), CustFunc hashGet)
+    , ((varNamespace, "hash-set"), CustFunc hashSet)]
 
 -- Convert an opaque lisp value to a session-transforming action.
 opaqueToSessFunc :: LispVal -> Sess -> IO Sess
@@ -43,52 +50,58 @@ chainM [] a = return a
 chainM (x:xs) a = x a >>= chainM xs
 
 -- === BINDING WRAPPERS. ===
--- TODO: Find a less repetitive way to do this.
 addKeyWrapper :: [LispVal] -> IOThrowsError LispVal
-addKeyWrapper xs | length xs == 1 =
-    case head xs of
-         Char c -> liftThrows $ Right $ toOpaque $ addKey c
-         _ -> liftThrows $ Left $ Default "Expected a character"
-addKeyWrapper _ = liftThrows $ Left $ Default "Expected a character"
+addKeyWrapper [(Char c)] = liftThrows . Right . toOpaque $ addKey c
+addKeyWrapper _ = liftThrows . Left . Default $ "Usage: (add-key <char>)"
 
 scrollHistoryWrapper :: [LispVal] -> IOThrowsError LispVal
-scrollHistoryWrapper xs | length xs == 1 =
-    case head xs of
-         Number i -> liftThrows $ Right $ toOpaque $ scrollHistory $ fromIntegral i
-         _ -> liftThrows $ Left $ Default "Expected a number"
-scrollHistoryWrapper _ = liftThrows $ Left $ Default "Expected a number"
+scrollHistoryWrapper [(Number n)] = liftThrows . Right . toOpaque . scrollHistory $
+    fromIntegral n
+scrollHistoryWrapper _ = liftThrows . Left . Default $ "Usage: (scroll-history <num>)"
 
 scrollLinesWrapper :: [LispVal] -> IOThrowsError LispVal
-scrollLinesWrapper xs | length xs == 1 =
-    case head xs of
-         Number i -> liftThrows $ Right $ toOpaque $ scrollLines $ fromIntegral i
-         _ -> liftThrows $ Left $ Default "Expected a number"
-scrollLinesWrapper _ = liftThrows $ Left $ Default "Expected a number"
+scrollLinesWrapper [(Number n)] = liftThrows . Right . toOpaque . scrollLines $
+    fromIntegral n
+scrollLinesWrapper _ = liftThrows . Left . Default $ "Usage: (scroll-lines <num>)"
 
 writeScrollbackWrapper :: [LispVal] -> IOThrowsError LispVal
-writeScrollbackWrapper xs | length xs == 1 =
-    case (head xs) of
-         String s -> liftThrows $ Right $ toOpaque $ writeScrollback $ formatStr s
-         _ -> liftThrows $ Left $ Default "Expected a string"
-writeScrollbackWrapper _ = liftThrows $ Left $ Default "Expected a string"
+writeScrollbackWrapper [(String s)] = liftThrows . Right . toOpaque . writeScrollback $
+    formatStr s
+writeScrollbackWrapper _ = liftThrows . Left . Default $ "Usage: (print str)"
 
 writeScrollbackLnWrapper :: [LispVal] -> IOThrowsError LispVal
-writeScrollbackLnWrapper xs | length xs == 1 =
-    case (head xs) of
-         String s -> liftThrows $ Right $ toOpaque $ writeScrollbackLn $ formatStr s
-         _ -> liftThrows $ Left $ Default "Expected a string"
-writeScrollbackLnWrapper _ = liftThrows $ Left $ Default "Expected a string"
+writeScrollbackLnWrapper [(String s)] = liftThrows . Right . toOpaque . writeScrollbackLn $
+    formatStr s
+writeScrollbackLnWrapper _ = liftThrows . Left . Default $ "Usage: (println str)"
 
 sendToServerWrapper :: [LispVal] -> IOThrowsError LispVal
-sendToServerWrapper xs | length xs == 1 =
-    case (head xs) of
-         String s -> liftThrows $ Right $ toOpaque $ sendToServer s
-         x -> liftThrows $ Left $ Default ("Expected a string, got: " ++ show x)
-sendToServerWrapper _ = liftThrows $ Left $ Default "Usage: send <string>"
+sendToServerWrapper [(String s)] = liftThrows . Right . toOpaque $ sendToServer s
+sendToServerWrapper _ = liftThrows . Left . Default $ "Usage: (send <string>)"
 
 compositeAction :: [LispVal] -> IOThrowsError LispVal
-compositeAction xs | length xs == 1 =
-    case head xs of
-         List l -> liftThrows $ Right $ toOpaque $ chainM $ map opaqueToSessFunc l
-         x -> liftThrows $ Left $ Default ("Expected a list, got: " ++ show x)
-compositeAction _ = liftThrows $ Left $ Default "Usage: action <list>"
+compositeAction [(List l)] = liftThrows . Right . toOpaque . chainM $ map opaqueToSessFunc l
+compositeAction _ = liftThrows . Left . Default $ "Usage: (composite <list>)"
+
+stringRepr :: [LispVal] -> IOThrowsError LispVal
+stringRepr [v] = liftThrows . Right . String $ show v
+stringRepr _ = liftThrows . Left . Default $ "Usage: (string-repr <val>)"
+
+makeHash :: [LispVal] -> IOThrowsError LispVal
+makeHash [] = liftThrows . Right $ HashTable M.empty
+makeHash _ = liftThrows . Left . Default $ "Usage: (make-hash)"
+
+hashContains :: [LispVal] -> IOThrowsError LispVal
+hashContains [(HashTable ht), key] = liftThrows . Right . Bool $ M.member key ht
+hashContains _ = liftThrows . Left . Default $ "Usage: (hash-contains? ht key)"
+
+hashGet :: [LispVal] -> IOThrowsError LispVal
+hashGet [(HashTable ht), key] =
+    case M.lookup key ht of
+         Just val -> liftThrows . Right $ val
+         Nothing -> liftThrows . Right . Bool $ False
+hashGet _ = liftThrows . Left . Default $ "Usage: (hash-get ht key)"
+
+hashSet :: [LispVal] -> IOThrowsError LispVal
+hashSet [(HashTable ht), key, val] = liftThrows . Right . HashTable $
+    M.insert key val ht
+hashSet _ = liftThrows . Left . Default $ "Usage: (hash-set ht key val)"
