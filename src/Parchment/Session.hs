@@ -19,6 +19,9 @@ module Parchment.Session
     , historyNewer
     , scrollHistory
     , foldFuncList
+    , highlightStr
+    , unhighlightStr
+    , searchBackwards
     ) where
 
 import Brick.Types (EventM, Next)
@@ -26,10 +29,12 @@ import Brick.Util (clamp)
 import Control.Concurrent.STM.TQueue
 import Control.Monad.State (get, put, execState)
 import Control.Monad.STM (atomically)
+import Data.Array ((!))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
-import Data.List (foldl')
+import Data.List (foldl', findIndex)
 import qualified Data.Map.Lazy as Map
+import Data.Maybe (fromMaybe, isJust, fromJust)
 import Data.Monoid (appEndo, Endo(..))
 import Data.Word (Word8)
 import qualified Graphics.Vty as V
@@ -39,6 +44,8 @@ import Lens.Micro.TH (makeLenses)
 import Parchment.Fchar
 import Parchment.Parsing
 import Text.Parsec hiding (Error, getInput)
+import Text.Regex.TDFA (CompOption(..), ExecOption(..))
+import qualified Text.Regex.TDFA.String as R
 
 data Sess = Sess {
     _scrollback :: [[Fchar]]
@@ -53,6 +60,7 @@ data Sess = Sess {
     , _history :: [String]
     , _history_loc :: Int
     , _scm_env :: Env
+    , _search_result :: Maybe (Int, Int, Int) -- line, start index, end index
     }
 makeLenses ''Sess
 
@@ -73,6 +81,7 @@ initialSession q bindings scm_env =
         , _history = [""]
         , _history_loc = 0
         , _scm_env = scm_env
+        , _search_result = Nothing
         }
 
 -- === ACTIONS ===
@@ -98,6 +107,67 @@ writeScrollback str sess = sess & scrollback .~
 
 writeScrollbackLn :: [Fchar] -> Sess -> Sess
 writeScrollbackLn str = writeScrollback (str ++ [Fchar { _ch = '\n', _attr = V.defAttr}])
+
+-- (line, start index, end index), modification func, session
+modifyScrollback :: (Int, Int, Int) -> (Fchar -> Fchar) -> Sess -> Sess
+modifyScrollback (line, start, end) func =
+    foldr (flip (.)) id $ flip map [start..end] $
+        \i -> \sess -> sess & (scrollback . ix line . ix i) %~ func
+
+-- Highlight line, start index, end index.
+highlightStr :: (Int, Int, Int) -> Sess -> Sess
+highlightStr = flip modifyScrollback $ withStyle V.standout
+
+-- Unhighlight line, start index, end index.
+unhighlightStr :: (Int, Int, Int) -> Sess -> Sess
+unhighlightStr = flip modifyScrollback $ withStyle V.defaultStyleMask
+
+regexCompOpt :: CompOption
+regexCompOpt = CompOption
+    { caseSensitive = True
+    , multiline = False
+    , rightAssoc = True
+    , newSyntax = True
+    , lastStarGreedy = False
+    }
+
+regexExecOpt :: ExecOption
+regexExecOpt = ExecOption {captureGroups = True}
+
+searchBackwards :: String -> Sess -> Sess
+searchBackwards str sess =
+    case R.compile regexCompOpt regexExecOpt str of
+         Left err -> flip writeScrollbackLn sess . colorize V.red $ "Regex error: " ++ err
+         Right regex -> case searchBackwardsHelper regex (sess ^. scrollback) (line - 1) of
+                             Just sr -> highlightStr sr . setSearchRes (Just sr) .
+                                 unhighlightPrevious $ sess
+                             Nothing -> writeScrollbackLn (colorize V.red $ "Not found!") .
+                                 setSearchRes Nothing . unhighlightPrevious $ sess
+    where (line, _, _) = fromMaybe (length (sess ^. scrollback) - 1, 0, 0) $
+                             sess ^. search_result
+          unhighlightPrevious sess =
+              case (sess ^. search_result) of
+                   Nothing -> sess
+                   Just sr -> unhighlightStr sr $ sess
+          setSearchRes sr sess = sess & search_result .~ sr
+
+-- Input: Search string, scrollback buffer, starting line.
+-- Returns: Line, start index, end index if found; Nothing otherwise.
+searchBackwardsHelper :: R.Regex -> [[Fchar]] -> Int -> Maybe (Int, Int, Int)
+searchBackwardsHelper r sb start_line =
+    case findIndex isJust search_results of
+         Nothing -> Nothing
+         Just idx -> Just (start_line - idx, start, start + len - 1)
+             where (start, len) = fromJust (search_results !! idx)
+    where search_results = map (findInFString r) . reverse . take (start_line + 1) $ sb
+
+-- Returns (start, length) if found; Nothing otherwise.
+findInFString :: R.Regex -> [Fchar] -> Maybe (Int, Int)
+findInFString r fs =
+    case R.execute r $ removeFormatting fs of
+         Left _ -> Nothing
+         Right Nothing -> Nothing
+         Right (Just ma) -> Just $ ma ! 0
 
 scrollLines :: Int -> Sess -> Sess
 scrollLines n sess = sess & scroll_loc %~

@@ -4,8 +4,10 @@ module Parchment.Fchar
     ( Fchar(..)
     , applyAttr
     , colorize
+    , withStyle
     , defaultStyle
     , formatStr
+    , removeFormatting
     ) where
 
 import qualified Graphics.Vty as V
@@ -13,7 +15,7 @@ import Text.Parsec hiding (Error, getInput)
 
 data Fchar = Fchar {_ch :: Char, _attr :: V.Attr}
 instance Show Fchar where
-    show Fchar {_ch = ch, _attr = _} = show ch
+    show Fchar {_ch = ch, _attr = _} = [ch]
 
 applyAttr :: V.Attr -> String -> [Fchar]
 applyAttr a str = map (\c -> Fchar {_ch = c, _attr = a}) str 
@@ -21,8 +23,15 @@ applyAttr a str = map (\c -> Fchar {_ch = c, _attr = a}) str
 colorize :: V.Color -> String -> [Fchar]
 colorize c = applyAttr (V.withForeColor V.defAttr c)
 
+withStyle :: V.Style -> Fchar -> Fchar
+withStyle style Fchar {_ch = ch, _attr = a} = Fchar {_ch = ch, _attr =
+    V.Attr (V.SetTo style) (V.attrForeColor a) (V.attrBackColor a) }
+
 defaultStyle :: String -> [Fchar]
 defaultStyle = applyAttr V.defAttr
+
+removeFormatting :: [Fchar] -> String
+removeFormatting = map _ch
 
 formatStr :: String -> [Fchar]
 formatStr s = case runParser formatStrParser V.defAttr "source" s of

@@ -92,10 +92,8 @@
     ((string-prefix? "#" input)
      (run-command (string-drop input 1)))
     ; Search.
-    ;((string-prefix? "/" input)
-    ; (begin
-    ;   (search-backwards (substring input 1))
-    ;   '())) ; Note that an empty list is returned.
+    ((string-prefix? "/" input)
+     (search-backwards (substring input 1 (string-length input))))
     ; Everything else.
     (else
       (full-send input))))

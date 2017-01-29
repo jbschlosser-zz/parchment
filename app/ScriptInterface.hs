@@ -24,6 +24,7 @@ scriptInterface = r5rsEnv >>= flip extendEnv
     , ((varNamespace, "history-newer"), toOpaque historyNewer)
     , ((varNamespace, "scroll-history"), CustFunc scrollHistoryWrapper)
     , ((varNamespace, "scroll-lines"), CustFunc scrollLinesWrapper)
+    , ((varNamespace, "search-backwards"), CustFunc searchBackwardsWrapper)
     , ((varNamespace, "print"), CustFunc writeScrollbackWrapper)
     , ((varNamespace, "println"), CustFunc writeScrollbackLnWrapper)
     , ((varNamespace, "add-key"), CustFunc addKeyWrapper)
@@ -63,6 +64,10 @@ scrollLinesWrapper :: [LispVal] -> IOThrowsError LispVal
 scrollLinesWrapper [(Number n)] = liftThrows . Right . toOpaque . scrollLines $
     fromIntegral n
 scrollLinesWrapper _ = liftThrows . Left . Default $ "Usage: (scroll-lines <num>)"
+
+searchBackwardsWrapper :: [LispVal] -> IOThrowsError LispVal
+searchBackwardsWrapper [(String s)] = liftThrows . Right . toOpaque $ searchBackwards s
+searchBackwardsWrapper _ = liftThrows . Left . Default $ "Usage: (search-backwards <string>)"
 
 writeScrollbackWrapper :: [LispVal] -> IOThrowsError LispVal
 writeScrollbackWrapper [(String s)] = liftThrows . Right . toOpaque . writeScrollback $

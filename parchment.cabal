@@ -22,6 +22,7 @@ library
       Parchment.Session
   build-depends:       base >= 4.7 && < 5
                      , bytestring >= 0.10
+                     , array
                      , brick
                      , containers
                      , husk-scheme
@@ -30,6 +31,7 @@ library
                      , microlens
                      , microlens-th
                      , mtl
+                     , regex-tdfa
                      , stm
   default-language:    Haskell2010
 
@@ -43,6 +45,7 @@ executable parchment
                      , parchment
                      , network >= 2.6
                      , bytestring >= 0.10
+                     , array
                      , brick
                      , vty
                      , text
@@ -61,6 +64,7 @@ executable parchment
                      , split
                      , mtl
                      , parsec
+                     , regex-tdfa
                      , xdg-basedir
   default-language:    Haskell2010
 
