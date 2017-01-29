@@ -33,7 +33,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import Data.List (foldl', findIndex)
 import qualified Data.Map.Lazy as Map
-import Data.Maybe (fromMaybe, isJust, fromJust)
+import Data.Maybe (isJust, fromJust)
 import Data.Word (Word8)
 import qualified Graphics.Vty as V
 import Language.Scheme.Types
@@ -58,9 +58,23 @@ data Sess = Sess {
     , _history :: [String]
     , _history_loc :: Int
     , _scm_env :: Env
-    , _search_result :: Maybe (Int, Int, Int) -- line, start index, end index
+    , _last_search :: Maybe SearchResult -- str, line, start index, end index
+    }
+data SearchResult = SearchResult
+    { _search :: String
+    , _line :: Int
+    , _start :: Int
+    , _end :: Int
+    }
+searchResult :: String -> Int -> Int -> Int -> SearchResult
+searchResult search line start end = SearchResult
+    { _search = search
+    , _line = line
+    , _start = start
+    , _end = end
     }
 makeLenses ''Sess
+makeLenses ''SearchResult
 
 -- Initial state of the session data.
 initialSession :: TQueue BS.ByteString ->
@@ -79,7 +93,7 @@ initialSession q bindings scm_env =
         , _history = [""]
         , _history_loc = 0
         , _scm_env = scm_env
-        , _search_result = Nothing
+        , _last_search = Nothing
         }
 
 -- === ACTIONS ===
@@ -118,18 +132,25 @@ searchBackwards :: String -> Sess -> Sess
 searchBackwards str sess =
     case R.compile regexCompOpt regexExecOpt str of
          Left err -> flip writeBufferLn sess . colorize V.red $ "Regex error: " ++ err
-         Right regex -> case searchBackwardsHelper regex (sess ^. buffer) (line - 1) of
-                             Just sr -> highlightStr sr . setSearchRes (Just sr) .
+         Right regex -> case searchBackwardsHelper regex (sess ^. buffer) (startLine sess) of
+                             Just sr -> highlightStr sr . setSearchRes str (Just sr) .
                                  unhighlightPrevious $ sess
                              Nothing -> writeBufferLn (colorize V.red $ "Not found!") .
-                                 setSearchRes Nothing . unhighlightPrevious $ sess
-    where (line, _, _) = fromMaybe (length (sess ^. buffer) - 1, 0, 0) $
-                             sess ^. search_result
+                                 setSearchRes str Nothing . unhighlightPrevious $ sess
+    where startLine sess =
+              case sess ^. last_search of
+                   Nothing -> length (sess ^. buffer) - 1
+                   Just sr -> if (sr ^. search) == str then
+                       (sr ^. line) - 1 else length (sess ^. buffer) - 1
           unhighlightPrevious sess =
-              case (sess ^. search_result) of
+              case sess ^. last_search of
                    Nothing -> sess
-                   Just sr -> unhighlightStr sr $ sess
-          setSearchRes sr sess = sess & search_result .~ sr
+                   Just sr ->
+                       unhighlightStr ((sr ^. line), (sr ^. start), (sr ^. end)) $ sess
+          setSearchRes str (Just (line, start, end)) sess =
+              sess & last_search .~ Just (searchResult str line start end)
+          setSearchRes _ Nothing sess =
+              sess & last_search .~ Nothing
 
 scrollLines :: Int -> Sess -> Sess
 scrollLines n sess = sess & scroll_loc %~
