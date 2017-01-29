@@ -38,12 +38,12 @@ data RecvEvent = RecvEvent BS.ByteString
 
 -- Main function.
 main :: IO ()
-main = withSocketsDo $ void $ do
+main = withSocketsDo . void $ do
     send_queue <- newTQueueIO
     eventChan <- newChan
     (scmEnv, configErr) <- loadConfig
     let sess = (case configErr of
-                    Just err -> writeScrollbackLn $ colorize V.red $
+                    Just err -> writeScrollbackLn . colorize V.red $
                         "Config error: " ++ err
                     Nothing -> id) $ initialSession send_queue keyBindings scmEnv
     forkIO $ runTCPClient (clientSettings 4000 (BSC.pack "127.0.0.1")) $ \server ->
@@ -52,7 +52,21 @@ main = withSocketsDo $ void $ do
             (sourceTQueue send_queue $$ appSink server)
     customMain (V.mkVty def) (Just eventChan) app sess
     where
+        chanSink ch writer closer = do
+            CL.mapM_ $ liftIO . writer ch
+            liftIO $ closer ch
         chanWriteRecvEvent c s = writeChan c (RecvEvent s)
+
+-- Loads the config file. Returns the environment and optionally any errors.
+loadConfig :: IO (Env, Maybe String)
+loadConfig = do
+    scmEnv <- scriptInterface
+    configPath <- getUserConfigFile "parchment" "config.scm"
+    let conf = List [Atom "include", String configPath]
+    res <- evalLisp' scmEnv conf
+    case res of
+         Left err -> return (scmEnv, Just $ show err)
+         Right _ -> return (scmEnv, Nothing)
 
 -- Application setup.
 app :: App Sess RecvEvent ()
@@ -86,6 +100,10 @@ keyBindings = fromList $ map rawKeyBinding rawKeys ++
     , ((V.EvKey V.KDown []), continue . historyNewer)
     , ((V.EvKey (V.KChar 'u') [V.MCtrl]), continue . clearInputLine)
     ]
+    where
+        rawKeys = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890!@#$%^&*()_+-=_+[]\\;',./{}|:\"<>? `~"
+        rawKeyBinding c = ((V.EvKey (V.KChar c) []), \st -> continue $ addKey c st)
+
 
 -- Handle UI and other app events.
 handleEvent :: Sess -> BrickEvent () RecvEvent -> EventM () (Next Sess)
@@ -125,29 +143,3 @@ drawScrollback lines scroll =
     where drawScrollbackLine [] = str " " -- handle blank case
           drawScrollbackLine s = markup . mconcat . map fcharToMarkup $ s
           fcharToMarkup = \t -> (singleton $ _ch t) @@ (_attr t)
-
--- === HELPER FUNCTIONS. ===
--- Loads the config file. Returns the environment and optionally any errors.
-loadConfig :: IO (Env, Maybe String)
-loadConfig = do
-    scmEnv <- scriptInterface
-    configPath <- getUserConfigFile "parchment" "config.scm"
-    let conf = List [Atom "include", String configPath]
-    res <- evalLisp' scmEnv conf
-    case res of
-         Left err -> return (scmEnv, Just $ show err)
-         Right _ -> return (scmEnv, Nothing)
-
--- Creates a binding for a raw char key.
-rawKeyBinding :: Char -> (V.Event, (Sess -> EventM () (Next Sess)))
-rawKeyBinding c = ((V.EvKey (V.KChar c) []), \st -> continue $ addKey c st)
-
--- The raw keys to use.
-rawKeys :: String
-rawKeys = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890!@#$%^&*()_+-=_+[]\\;',./{}|:\"<>? `~"
-
--- channel, write func, close func
-chanSink :: MonadIO m => chan -> (chan -> a -> IO ()) -> (chan -> IO ()) -> Sink a m ()
-chanSink ch writer closer = do
-    CL.mapM_ $ liftIO . writer ch
-    liftIO $ closer ch
