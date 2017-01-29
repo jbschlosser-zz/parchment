@@ -1,7 +1,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module Parchment.Fchar
-    ( Fchar(..)
+module Parchment.FString
+    ( FChar(..)
+    , FString
     , applyAttr
     , colorize
     , withStyle
@@ -13,27 +14,29 @@ module Parchment.Fchar
 import qualified Graphics.Vty as V
 import Text.Parsec hiding (Error, getInput)
 
-data Fchar = Fchar {_ch :: Char, _attr :: V.Attr}
-instance Show Fchar where
-    show Fchar {_ch = ch, _attr = _} = [ch]
+data FChar = FChar {_ch :: Char, _attr :: V.Attr}
+instance Show FChar where
+    show FChar {_ch = ch, _attr = _} = [ch]
 
-applyAttr :: V.Attr -> String -> [Fchar]
-applyAttr a str = map (\c -> Fchar {_ch = c, _attr = a}) str 
+type FString = [FChar]
 
-colorize :: V.Color -> String -> [Fchar]
+applyAttr :: V.Attr -> String -> FString
+applyAttr a str = map (\c -> FChar {_ch = c, _attr = a}) str 
+
+colorize :: V.Color -> String -> FString
 colorize c = applyAttr (V.withForeColor V.defAttr c)
 
-withStyle :: V.Style -> Fchar -> Fchar
-withStyle style Fchar {_ch = ch, _attr = a} = Fchar {_ch = ch, _attr =
+withStyle :: V.Style -> FChar -> FChar
+withStyle style FChar {_ch = ch, _attr = a} = FChar {_ch = ch, _attr =
     V.Attr (V.SetTo style) (V.attrForeColor a) (V.attrBackColor a) }
 
-defaultStyle :: String -> [Fchar]
+defaultStyle :: String -> FString
 defaultStyle = applyAttr V.defAttr
 
-removeFormatting :: [Fchar] -> String
+removeFormatting :: FString -> String
 removeFormatting = map _ch
 
-formatStr :: String -> [Fchar]
+formatStr :: String -> FString
 formatStr s = case runParser formatStrParser V.defAttr "source" s of
                    -- TODO: Maybe better error handling?
                    Left _ -> defaultStyle $ s
@@ -62,7 +65,7 @@ formatPartParser = do
     return chars
 
 -- Matches a whole string with optional format parts.
-formatStrParser :: Parsec String V.Attr [[Fchar]]
+formatStrParser :: Parsec String V.Attr [FString]
 formatStrParser = many $ do
     part <- formatPartParser <|> many1 (noneOf "{")
     state <- getState

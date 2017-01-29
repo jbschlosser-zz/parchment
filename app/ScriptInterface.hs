@@ -9,7 +9,7 @@ import qualified Graphics.Vty as V
 import Language.Scheme.Core
 import Language.Scheme.Types
 import Language.Scheme.Variables
-import Parchment.Fchar
+import Parchment.FString
 import Parchment.Session
 
 scriptInterface :: IO Env
@@ -25,8 +25,8 @@ scriptInterface = r5rsEnv >>= flip extendEnv
     , ((varNamespace, "scroll-history"), CustFunc scrollHistoryWrapper)
     , ((varNamespace, "scroll-lines"), CustFunc scrollLinesWrapper)
     , ((varNamespace, "search-backwards"), CustFunc searchBackwardsWrapper)
-    , ((varNamespace, "print"), CustFunc writeScrollbackWrapper)
-    , ((varNamespace, "println"), CustFunc writeScrollbackLnWrapper)
+    , ((varNamespace, "print"), CustFunc writeBufferWrapper)
+    , ((varNamespace, "println"), CustFunc writeBufferLnWrapper)
     , ((varNamespace, "add-key"), CustFunc addKeyWrapper)
     , ((varNamespace, "composite"), CustFunc compositeAction)
     , ((varNamespace, "do-nothing"), toOpaque (id :: Sess -> Sess))
@@ -42,7 +42,7 @@ opaqueToSessFunc lv = case fromOpaque lv :: ThrowsError (Sess -> IO Sess) of
                            Right f -> f
                            Left _ -> case fromOpaque lv :: ThrowsError (Sess -> Sess) of
                                           Right f -> return . f
-                                          Left err -> return . (writeScrollbackLn
+                                          Left err -> return . (writeBufferLn
                                               (colorize V.red $ "Error: " ++ (show err)))
 
 -- Chain a list of monad functions, with each result feeding into the next.
@@ -69,15 +69,15 @@ searchBackwardsWrapper :: [LispVal] -> IOThrowsError LispVal
 searchBackwardsWrapper [(String s)] = liftThrows . Right . toOpaque $ searchBackwards s
 searchBackwardsWrapper _ = liftThrows . Left . Default $ "Usage: (search-backwards <string>)"
 
-writeScrollbackWrapper :: [LispVal] -> IOThrowsError LispVal
-writeScrollbackWrapper [(String s)] = liftThrows . Right . toOpaque . writeScrollback $
+writeBufferWrapper :: [LispVal] -> IOThrowsError LispVal
+writeBufferWrapper [(String s)] = liftThrows . Right . toOpaque . writeBuffer $
     formatStr s
-writeScrollbackWrapper _ = liftThrows . Left . Default $ "Usage: (print str)"
+writeBufferWrapper _ = liftThrows . Left . Default $ "Usage: (print str)"
 
-writeScrollbackLnWrapper :: [LispVal] -> IOThrowsError LispVal
-writeScrollbackLnWrapper [(String s)] = liftThrows . Right . toOpaque . writeScrollbackLn $
+writeBufferLnWrapper :: [LispVal] -> IOThrowsError LispVal
+writeBufferLnWrapper [(String s)] = liftThrows . Right . toOpaque . writeBufferLn $
     formatStr s
-writeScrollbackLnWrapper _ = liftThrows . Left . Default $ "Usage: (println str)"
+writeBufferLnWrapper _ = liftThrows . Left . Default $ "Usage: (println str)"
 
 sendToServerWrapper :: [LispVal] -> IOThrowsError LispVal
 sendToServerWrapper [(String s)] = liftThrows . Right . toOpaque $ sendToServer s

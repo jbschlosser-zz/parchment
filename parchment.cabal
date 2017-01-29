@@ -17,7 +17,7 @@ library
   hs-source-dirs:      src
   exposed-modules:
       Parchment
-      Parchment.Fchar
+      Parchment.FString
       Parchment.Parsing
       Parchment.Session
   build-depends:       base >= 4.7 && < 5

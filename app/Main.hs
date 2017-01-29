@@ -29,7 +29,7 @@ import Language.Scheme.Core
 import Language.Scheme.Types
 import Lens.Micro ((^.))
 import Network (withSocketsDo)
-import Parchment.Fchar
+import Parchment.FString
 import Parchment.Session
 import ScriptInterface
 import System.Environment.XDG.BaseDir
@@ -43,7 +43,7 @@ main = withSocketsDo . void $ do
     eventChan <- newChan
     (scmEnv, configErr) <- loadConfig
     let sess = (case configErr of
-                    Just err -> writeScrollbackLn . colorize V.red $
+                    Just err -> writeBufferLn . colorize V.red $
                         "Config error: " ++ err
                     Nothing -> id) $ initialSession send_queue keyBindings scmEnv
     forkIO $ runTCPClient (clientSettings 4000 (BSC.pack "127.0.0.1")) $ \server ->
@@ -90,10 +90,10 @@ keyBindings = fromList $ map rawKeyBinding rawKeys ++
              Right l -> do
                  case l of
                       Opaque _ -> (liftIO $ opaqueToSessFunc l sess) >>= continue
-                      x -> continue $ flip writeScrollbackLn sess $
+                      x -> continue $ flip writeBufferLn sess $
                            colorize V.red $ "Expected an action from send-hook, found: " ++
                                (show x)
-             Left err -> continue $ flip writeScrollbackLn sess $ colorize V.red $ show err)
+             Left err -> continue $ flip writeBufferLn sess $ colorize V.red $ show err)
     , ((V.EvKey V.KPageUp []), continue . pageUp)
     , ((V.EvKey V.KPageDown []), continue . pageDown)
     , ((V.EvKey V.KUp []), continue . historyOlder)
@@ -112,7 +112,7 @@ handleEvent sess (VtyEvent e) =
         Just b -> b sess
         Nothing -> case e of
                         V.EvResize _ _ -> continue sess
-                        _ -> continue $ flip writeScrollbackLn sess $
+                        _ -> continue $ flip writeBufferLn sess $
                             colorize V.magenta $ "No binding found: " ++ show e
 handleEvent sess (AppEvent e) =
     case e of
@@ -122,24 +122,24 @@ handleEvent sess _ = continue sess
 -- Draw the UI.
 drawUI :: Sess -> [Widget()]
 drawUI sess =
-    [vBox [ padBottom Max $ drawScrollback sb scroll
+    [vBox [ padBottom Max $ drawBuffer buf scroll
           , hBorder
           , showCursor () (Location (curs, 0))
               (if length input > 0 then str input else str " ")
           ]]
     -- TODO: Fix this to use lenses.
     where input = getInput sess
-          sb = _scrollback sess
+          buf = _buffer sess
           curs = _cursor sess
           scroll = _scroll_loc sess
 
-drawScrollback :: [[Fchar]] -> Int -> Widget()
-drawScrollback lines scroll = 
+drawBuffer :: [FString] -> Int -> Widget()
+drawBuffer lines scroll = 
     Widget Greedy Greedy $ do
         ctx <- getContext
         let num = ctx ^. availHeightL
         let start = max 0 $ length lines - scroll - num
-        render $ foldr (<=>) (str "") $ map drawScrollbackLine $ take num $ drop start lines
-    where drawScrollbackLine [] = str " " -- handle blank case
-          drawScrollbackLine s = markup . mconcat . map fcharToMarkup $ s
+        render $ foldr (<=>) (str "") $ map drawBufferLine $ take num $ drop start lines
+    where drawBufferLine [] = str " " -- handle blank case
+          drawBufferLine s = markup . mconcat . map fcharToMarkup $ s
           fcharToMarkup = \t -> (singleton $ _ch t) @@ (_attr t)
