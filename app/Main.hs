@@ -22,16 +22,18 @@ import Data.Conduit.TQueue (sourceTQueue)
 import Data.Default
 import Data.Map (fromList)
 import qualified Data.Map.Lazy as Map
+import Data.Maybe (fromJust)
 import Data.Text (singleton)
 import Data.Text.Markup ((@@))
 import qualified Graphics.Vty as V
 import Language.Scheme.Core
 import Language.Scheme.Types
-import Lens.Micro ((^.))
+import Lens.Micro ((^.), (&), (.~))
 import Network (withSocketsDo)
 import Parchment.FString
 import Parchment.Session
 import ScriptInterface
+import qualified System.Console.Terminal.Size as T
 import System.Environment.XDG.BaseDir
 
 data RecvEvent = RecvEvent BS.ByteString
@@ -74,9 +76,18 @@ app =
     App { appDraw = drawUI
         , appHandleEvent = handleEvent
         , appAttrMap = const $ attrMap V.defAttr []
-        , appStartEvent = return
+        , appStartEvent = onAppStart
         , appChooseCursor = showFirstCursor
         }
+
+-- Get initial number of lines available to the buffer during startup.
+-- This info is needed for proper scrollback. Note that the number is updated
+-- during every resize to remain correct.
+onAppStart :: Sess -> EventM () Sess
+onAppStart sess = do
+    size <- liftIO T.size
+    let lines = (T.height $ fromJust size) - nonBufferLines
+    return $ sess & buf_lines .~ lines
 
 -- Key bindings.
 keyBindings = fromList $ map rawKeyBinding rawKeys ++
@@ -111,7 +122,10 @@ handleEvent sess (VtyEvent e) =
     case Map.lookup e (_bindings sess) of
         Just b -> b sess
         Nothing -> case e of
-                        V.EvResize _ _ -> continue sess
+                        -- Update the number of buffer lines after the resize.
+                        V.EvResize _ lines -> continue $
+                            scrollLines 0 (sess & buf_lines .~ (lines - nonBufferLines))
+                        -- No binding was found.
                         _ -> continue $ flip writeBufferLn sess $
                             colorize V.magenta $ "No binding found: " ++ show e
 handleEvent sess (AppEvent e) =
@@ -127,11 +141,15 @@ drawUI sess =
           , showCursor () (Location (curs, 0))
               (if length input > 0 then str input else str " ")
           ]]
-    -- TODO: Fix this to use lenses.
     where input = getInput sess
-          buf = _buffer sess
-          curs = _cursor sess
-          scroll = _scroll_loc sess
+          buf = sess ^. buffer
+          curs = sess ^. cursor
+          scroll = sess ^. scroll_loc
+
+-- A bit hackish.. this is the number of vertical lines in the interface
+-- that aren't reserved for the buffer.
+nonBufferLines :: Int
+nonBufferLines = 2
 
 drawBuffer :: [FString] -> Int -> Widget()
 drawBuffer lines scroll = 

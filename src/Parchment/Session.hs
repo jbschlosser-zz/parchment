@@ -21,6 +21,11 @@ module Parchment.Session
     , highlightStr
     , unhighlightStr
     , searchBackwards
+    -- lenses
+    , buffer
+    , buf_lines
+    , cursor
+    , scroll_loc
     ) where
 
 import Brick.Types (EventM, Next)
@@ -45,8 +50,9 @@ import Text.Parsec hiding (Error, getInput)
 import Text.Regex.TDFA (CompOption(..), ExecOption(..))
 import qualified Text.Regex.TDFA.String as R
 
-data Sess = Sess {
-    _buffer :: [FString]
+data Sess = Sess
+    { _buffer :: [FString]
+    , _buf_lines :: Int
     , _cursor :: Int
     , _bindings :: Map.Map V.Event (Sess -> EventM () (Next Sess))
     , _send_queue :: TQueue BS.ByteString
@@ -79,22 +85,22 @@ makeLenses ''SearchResult
 -- Initial state of the session data.
 initialSession :: TQueue BS.ByteString ->
     Map.Map V.Event (Sess -> EventM () (Next Sess)) -> Env -> Sess
-initialSession q bindings scm_env =
-    Sess {
-        _buffer = [[]]
-        , _cursor = 0
-        , _bindings = bindings
-        , _send_queue = q
-        , _telnet_state = NotInProgress
-        , _esc_seq_state = NotInProgress
-        , _char_attr = V.defAttr
-        , _scroll_loc = 0
-        , _scroll_limit = 10000 -- lines in buffer
-        , _history = [""]
-        , _history_loc = 0
-        , _scm_env = scm_env
-        , _last_search = Nothing
-        }
+initialSession q bindings scm_env = Sess
+    { _buffer = [[]]
+    , _buf_lines = 0
+    , _cursor = 0
+    , _bindings = bindings
+    , _send_queue = q
+    , _telnet_state = NotInProgress
+    , _esc_seq_state = NotInProgress
+    , _char_attr = V.defAttr
+    , _scroll_loc = 0
+    , _scroll_limit = 10000 -- lines in buffer
+    , _history = [""]
+    , _history_loc = 0
+    , _scm_env = scm_env
+    , _last_search = Nothing
+    }
 
 -- === ACTIONS ===
 addKey :: Char -> Sess -> Sess
@@ -154,7 +160,7 @@ searchBackwards str sess =
 
 scrollLines :: Int -> Sess -> Sess
 scrollLines n sess = sess & scroll_loc %~
-    (\sl -> clampExclusive 0 (length $ sess ^. buffer) $ sl + n)
+    (\sl -> clamp 0 (length (sess ^. buffer) - (sess ^. buf_lines)) $ sl + n)
 
 pageUp :: Sess -> Sess
 pageUp = scrollLines 10
