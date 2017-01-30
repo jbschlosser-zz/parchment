@@ -71,6 +71,9 @@
        (composite
          (list (message (string-append "Backtracking " (foldr string-append "" backpath)))
                (composite (map full-send (map reverse-dir backpath)))))))
+    ; Quit
+    ((string=? cmd "quit")
+     quit)
     ; Invalid command.
     (else
       (println (string-append "{rInvalid command: " cmd)))))
@@ -81,7 +84,7 @@
   (cond
     ; Empty input.
     ((string=? input "")
-     (full-send input))
+     (send input))
     ; Multiple commands.
     ((string-contains-char input #\;)
      (composite (map send-hook (string-split input #\;))))

@@ -100,7 +100,11 @@ keyBindings = fromList $ map rawKeyBinding rawKeys ++
         case res of
              Right l -> do
                  case l of
-                      Opaque _ -> (liftIO $ opaqueToSessFunc l sess) >>= continue
+                      Opaque _ -> do
+                          res <- liftIO $ opaqueToAction l sess
+                          case res of
+                               Nothing -> halt sess
+                               Just s -> continue s
                       x -> continue $ flip writeBufferLn sess $
                            colorize V.red $ "Expected an action from send-hook, found: " ++
                                (show x)

@@ -1,9 +1,7 @@
 module ScriptInterface
     ( scriptInterface
-    , opaqueToSessFunc
-    , chainM
+    , opaqueToAction
     ) where
-
 import qualified Data.Map as M
 import qualified Graphics.Vty as V
 import Language.Scheme.Core
@@ -14,14 +12,16 @@ import Parchment.Session
 
 scriptInterface :: IO Env
 scriptInterface = r5rsEnv >>= flip extendEnv
-    [ ((varNamespace, "send"), CustFunc sendToServerWrapper)
-    , ((varNamespace, "del-key"), toOpaque delKey)
-    , ((varNamespace, "clear-input-line"), toOpaque clearInputLine)
-    , ((varNamespace, "page-up"), toOpaque pageUp)
-    , ((varNamespace, "page-down"), toOpaque pageDown)
-    , ((varNamespace, "next-history"), toOpaque nextHistory)
-    , ((varNamespace, "history-older"), toOpaque historyOlder)
-    , ((varNamespace, "history-newer"), toOpaque historyNewer)
+    [ ((varNamespace, "del-key"), sessFuncToOpaque delKey)
+    , ((varNamespace, "quit"), actionToOpaque $ return . (\_ -> Nothing))
+    , ((varNamespace, "clear-input-line"), sessFuncToOpaque clearInputLine)
+    , ((varNamespace, "page-up"), sessFuncToOpaque pageUp)
+    , ((varNamespace, "page-down"), sessFuncToOpaque pageDown)
+    , ((varNamespace, "next-history"), sessFuncToOpaque nextHistory)
+    , ((varNamespace, "history-older"), sessFuncToOpaque historyOlder)
+    , ((varNamespace, "history-newer"), sessFuncToOpaque historyNewer)
+    , ((varNamespace, "do-nothing"), sessFuncToOpaque id)
+    , ((varNamespace, "send"), CustFunc sendToServerWrapper)
     , ((varNamespace, "scroll-history"), CustFunc scrollHistoryWrapper)
     , ((varNamespace, "scroll-lines"), CustFunc scrollLinesWrapper)
     , ((varNamespace, "search-backwards"), CustFunc searchBackwardsWrapper)
@@ -29,62 +29,75 @@ scriptInterface = r5rsEnv >>= flip extendEnv
     , ((varNamespace, "println"), CustFunc writeBufferLnWrapper)
     , ((varNamespace, "add-key"), CustFunc addKeyWrapper)
     , ((varNamespace, "composite"), CustFunc compositeAction)
-    , ((varNamespace, "do-nothing"), toOpaque (id :: Sess -> Sess))
     , ((varNamespace, "string-repr"), CustFunc stringRepr)
     , ((varNamespace, "make-hash"), CustFunc makeHash)
     , ((varNamespace, "hash-contains?"), CustFunc hashContains)
     , ((varNamespace, "hash-get"), CustFunc hashGet)
     , ((varNamespace, "hash-set"), CustFunc hashSet)]
 
--- Convert an opaque lisp value to a session-transforming action.
-opaqueToSessFunc :: LispVal -> Sess -> IO Sess
-opaqueToSessFunc lv = case fromOpaque lv :: ThrowsError (Sess -> IO Sess) of
-                           Right f -> f
-                           Left _ -> case fromOpaque lv :: ThrowsError (Sess -> Sess) of
-                                          Right f -> return . f
-                                          Left err -> return . (writeBufferLn
-                                              (colorize V.red $ "Error: " ++ (show err)))
+opaqueToAction :: LispVal -> Sess -> IO (Maybe Sess)
+opaqueToAction lv =
+    case fromOpaque lv :: ThrowsError (Sess -> IO (Maybe Sess)) of
+         Right f -> f
+         Left err -> return . Just . writeBufferLn (colorize V.red $ "Error: " ++ (show err))
+
+actionToOpaque :: (Sess -> IO (Maybe Sess)) -> LispVal
+actionToOpaque = toOpaque
+
+sessFuncToOpaque :: (Sess -> Sess) -> LispVal
+sessFuncToOpaque sf = actionToOpaque $ return . Just . sf
+
+ioSessFuncToOpaque :: (Sess -> IO Sess) -> LispVal
+ioSessFuncToOpaque sf = actionToOpaque $ \sess -> do
+    res <- sf sess
+    return . Just $ res
 
 -- Chain a list of monad functions, with each result feeding into the next.
-chainM :: (Monad m) => [a -> m a] -> a -> m a
-chainM [] a = return a
-chainM (x:xs) a = x a >>= chainM xs
+chainMaybeIO :: [a -> IO (Maybe a)] -> a -> IO (Maybe a)
+chainMaybeIO [] a = return . Just $ a
+chainMaybeIO (x:xs) a = do
+    res <- x a
+    case res of
+         Nothing -> return Nothing
+         Just r -> chainMaybeIO xs r
 
 -- === BINDING WRAPPERS. ===
 addKeyWrapper :: [LispVal] -> IOThrowsError LispVal
-addKeyWrapper [(Char c)] = liftThrows . Right . toOpaque $ addKey c
+addKeyWrapper [(Char c)] = liftThrows . Right . sessFuncToOpaque $ addKey c
 addKeyWrapper _ = liftThrows . Left . Default $ "Usage: (add-key <char>)"
 
 scrollHistoryWrapper :: [LispVal] -> IOThrowsError LispVal
-scrollHistoryWrapper [(Number n)] = liftThrows . Right . toOpaque . scrollHistory $
+scrollHistoryWrapper [(Number n)] = liftThrows . Right . sessFuncToOpaque . scrollHistory $
     fromIntegral n
 scrollHistoryWrapper _ = liftThrows . Left . Default $ "Usage: (scroll-history <num>)"
 
 scrollLinesWrapper :: [LispVal] -> IOThrowsError LispVal
-scrollLinesWrapper [(Number n)] = liftThrows . Right . toOpaque . scrollLines $
+scrollLinesWrapper [(Number n)] = liftThrows . Right . sessFuncToOpaque . scrollLines $
     fromIntegral n
 scrollLinesWrapper _ = liftThrows . Left . Default $ "Usage: (scroll-lines <num>)"
 
 searchBackwardsWrapper :: [LispVal] -> IOThrowsError LispVal
-searchBackwardsWrapper [(String s)] = liftThrows . Right . toOpaque $ searchBackwards s
+searchBackwardsWrapper [(String s)] =
+    liftThrows . Right . sessFuncToOpaque $ searchBackwards s
 searchBackwardsWrapper _ = liftThrows . Left . Default $ "Usage: (search-backwards <string>)"
 
 writeBufferWrapper :: [LispVal] -> IOThrowsError LispVal
-writeBufferWrapper [(String s)] = liftThrows . Right . toOpaque . writeBuffer $
+writeBufferWrapper [(String s)] = liftThrows . Right . sessFuncToOpaque . writeBuffer $
     formatStr s
 writeBufferWrapper _ = liftThrows . Left . Default $ "Usage: (print str)"
 
 writeBufferLnWrapper :: [LispVal] -> IOThrowsError LispVal
-writeBufferLnWrapper [(String s)] = liftThrows . Right . toOpaque . writeBufferLn $
+writeBufferLnWrapper [(String s)] = liftThrows . Right . sessFuncToOpaque . writeBufferLn $
     formatStr s
 writeBufferLnWrapper _ = liftThrows . Left . Default $ "Usage: (println str)"
 
 sendToServerWrapper :: [LispVal] -> IOThrowsError LispVal
-sendToServerWrapper [(String s)] = liftThrows . Right . toOpaque $ sendToServer s
+sendToServerWrapper [(String s)] = liftThrows . Right . ioSessFuncToOpaque $ sendToServer s
 sendToServerWrapper _ = liftThrows . Left . Default $ "Usage: (send <string>)"
 
 compositeAction :: [LispVal] -> IOThrowsError LispVal
-compositeAction [(List l)] = liftThrows . Right . toOpaque . chainM $ map opaqueToSessFunc l
+compositeAction [(List l)] = liftThrows . Right . actionToOpaque . chainMaybeIO $
+    map opaqueToAction l
 compositeAction _ = liftThrows . Left . Default $ "Usage: (composite <list>)"
 
 stringRepr :: [LispVal] -> IOThrowsError LispVal
