@@ -33,14 +33,33 @@ import Network (withSocketsDo)
 import Parchment.FString
 import Parchment.Session
 import ScriptInterface
+import System.Console.ArgParser
+import System.Console.ArgParser.Format
 import qualified System.Console.Terminal.Size as T
+import System.Environment (getArgs)
 import System.Environment.XDG.BaseDir
 
 data RecvEvent = RecvEvent BS.ByteString
 
+data AppArgs = AppArgs String Int deriving (Show)
+argParser :: ParserSpec AppArgs
+argParser = AppArgs
+    `parsedBy` optPos "127.0.0.1" "hostname" `Descr` "Hostname of the MUD server"
+    `andBy` optPos 4000 "port" `Descr` "Port of the MUD server"
+
+withCorrectArgsDo :: (AppArgs -> IO ()) -> IO ()
+withCorrectArgsDo app = do
+    args <- getArgs
+    interface <- (`setAppDescr` "Haskell MUD client") <$> mkApp argParser
+    let parse_result = parseArgs args interface
+    case parse_result of
+         Left err -> putStrLn $ showCmdLineAppUsage defaultFormat interface ++ ['\n'] ++ err
+         Right args -> app args
+
 -- Main function.
 main :: IO ()
-main = withSocketsDo . void $ do
+main = withSocketsDo . withCorrectArgsDo $ \args -> do
+    let AppArgs hostname port = args
     send_queue <- newTQueueIO
     eventChan <- newChan
     (scmEnv, configErr) <- loadConfig
@@ -48,11 +67,11 @@ main = withSocketsDo . void $ do
                     Just err -> writeBufferLn . colorize V.red $
                         "Config error: " ++ err
                     Nothing -> id) $ initialSession send_queue keyBindings scmEnv
-    forkIO $ runTCPClient (clientSettings 4000 (BSC.pack "127.0.0.1")) $ \server ->
+    forkIO $ runTCPClient (clientSettings port (BSC.pack hostname)) $ \server ->
         void $ concurrently
-            (appSource server $$ chanSink eventChan chanWriteRecvEvent (\_ -> return ()))
+            (appSource server $$ chanSink eventChan chanWriteRecvEvent (return . const ()))
             (sourceTQueue send_queue $$ appSink server)
-    customMain (V.mkVty def) (Just eventChan) app sess
+    void . customMain (V.mkVty def) (Just eventChan) app $ sess
     where
         chanSink ch writer closer = do
             CL.mapM_ $ liftIO . writer ch

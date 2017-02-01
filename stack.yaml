@@ -40,6 +40,7 @@ packages:
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
 extra-deps:
+- argparser-0.3.4
 - brick-0.13
 - husk-scheme-3.19.3
 - text-zipper-0.7.1
