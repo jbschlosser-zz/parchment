@@ -26,6 +26,7 @@ module Parchment.Session
     , buf_lines
     , cursor
     , scroll_loc
+    , scm_env
     ) where
 
 import Brick.Types (EventM, Next)

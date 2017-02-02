@@ -1,19 +1,22 @@
 module ScriptInterface
     ( scriptInterface
     , opaqueToAction
+    , loadConfig
     ) where
 import qualified Data.Map as M
 import qualified Graphics.Vty as V
 import Language.Scheme.Core
 import Language.Scheme.Types
 import Language.Scheme.Variables
+import Lens.Micro ((&), (.~))
 import Parchment.FString
 import Parchment.Session
+import System.Environment.XDG.BaseDir
 
 scriptInterface :: IO Env
 scriptInterface = r5rsEnv >>= flip extendEnv
     [ ((varNamespace, "del-key"), sessFuncToOpaque delKey)
-    , ((varNamespace, "quit"), actionToOpaque $ return . (\_ -> Nothing))
+    , ((varNamespace, "quit"), actionToOpaque $ return . (const Nothing))
     , ((varNamespace, "clear-input-line"), sessFuncToOpaque clearInputLine)
     , ((varNamespace, "page-up"), sessFuncToOpaque pageUp)
     , ((varNamespace, "page-down"), sessFuncToOpaque pageDown)
@@ -21,6 +24,7 @@ scriptInterface = r5rsEnv >>= flip extendEnv
     , ((varNamespace, "history-older"), sessFuncToOpaque historyOlder)
     , ((varNamespace, "history-newer"), sessFuncToOpaque historyNewer)
     , ((varNamespace, "do-nothing"), sessFuncToOpaque id)
+    , ((varNamespace, "reload-config"), ioSessFuncToOpaque loadConfigAction)
     , ((varNamespace, "send"), CustFunc sendToServerWrapper)
     , ((varNamespace, "scroll-history"), CustFunc scrollHistoryWrapper)
     , ((varNamespace, "scroll-lines"), CustFunc scrollLinesWrapper)
@@ -35,6 +39,25 @@ scriptInterface = r5rsEnv >>= flip extendEnv
     , ((varNamespace, "hash-get"), CustFunc hashGet)
     , ((varNamespace, "hash-set"), CustFunc hashSet)]
 
+-- Loads the config file. Returns the environment and optionally any errors.
+loadConfig :: IO (Env, Maybe String)
+loadConfig = do
+    scmEnv <- scriptInterface
+    configPath <- getUserConfigFile "parchment" "config.scm"
+    let conf = List [Atom "include", String configPath]
+    res <- evalLisp' scmEnv conf
+    case res of
+         Left err -> return (scmEnv, Just $ show err)
+         Right _ -> return (scmEnv, Nothing)
+
+loadConfigAction :: Sess -> IO Sess
+loadConfigAction sess = do
+    (scmEnv, configErr) <- loadConfig
+    return $ case configErr of
+        Just err -> writeBufferLn (colorize V.red ("Config error: " ++ err)) $ sess
+        Nothing -> sess & scm_env .~ scmEnv
+
+-- Helper functions for converting between list types and Sess actions.
 opaqueToAction :: LispVal -> Sess -> IO (Maybe Sess)
 opaqueToAction lv =
     case fromOpaque lv :: ThrowsError (Sess -> IO (Maybe Sess)) of

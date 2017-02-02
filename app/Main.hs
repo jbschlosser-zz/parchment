@@ -37,7 +37,6 @@ import System.Console.ArgParser
 import System.Console.ArgParser.Format
 import qualified System.Console.Terminal.Size as T
 import System.Environment (getArgs)
-import System.Environment.XDG.BaseDir
 
 data RecvEvent = RecvEvent BS.ByteString
 
@@ -64,8 +63,7 @@ main = withSocketsDo . withCorrectArgsDo $ \args -> do
     eventChan <- newChan
     (scmEnv, configErr) <- loadConfig
     let sess = (case configErr of
-                    Just err -> writeBufferLn . colorize V.red $
-                        "Config error: " ++ err
+                    Just err -> writeBufferLn . colorize V.red $ "Config error: " ++ err
                     Nothing -> id) $ initialSession send_queue keyBindings scmEnv
     forkIO $ runTCPClient (clientSettings port (BSC.pack hostname)) $ \server ->
         void $ concurrently
@@ -77,17 +75,6 @@ main = withSocketsDo . withCorrectArgsDo $ \args -> do
             CL.mapM_ $ liftIO . writer ch
             liftIO $ closer ch
         chanWriteRecvEvent c s = writeChan c (RecvEvent s)
-
--- Loads the config file. Returns the environment and optionally any errors.
-loadConfig :: IO (Env, Maybe String)
-loadConfig = do
-    scmEnv <- scriptInterface
-    configPath <- getUserConfigFile "parchment" "config.scm"
-    let conf = List [Atom "include", String configPath]
-    res <- evalLisp' scmEnv conf
-    case res of
-         Left err -> return (scmEnv, Just $ show err)
-         Right _ -> return (scmEnv, Nothing)
 
 -- Application setup.
 app :: App Sess RecvEvent ()
