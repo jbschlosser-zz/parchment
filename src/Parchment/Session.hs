@@ -9,6 +9,7 @@ module Parchment.Session
     , clearInputLine
     , writeBuffer
     , writeBufferLn
+    , bind
     , getInput
     , nextHistory
     , receiveServerData
@@ -27,6 +28,7 @@ module Parchment.Session
     , cursor
     , scroll_loc
     , scm_env
+    , bindings
     ) where
 
 import Brick.Types (EventM, Next)
@@ -42,7 +44,7 @@ import qualified Data.Map.Lazy as Map
 import Data.Maybe (isJust, fromJust)
 import Data.Word (Word8)
 import qualified Graphics.Vty as V
-import Language.Scheme.Types
+import Language.Scheme.Types hiding (bindings)
 import Lens.Micro ((.~), (^.), (&), (%~), ix)
 import Lens.Micro.TH (makeLenses)
 import Parchment.FString
@@ -113,6 +115,9 @@ delKey sess =
         sess
     else
         sess & history . ix (sess ^. history_loc) %~ init & cursor %~ subtract 1
+
+bind :: V.Event -> (Sess -> EventM () (Next Sess)) -> Sess -> Sess
+bind event action sess = sess & bindings %~ (\b -> Map.insert event action b)
 
 getInput :: Sess -> String
 getInput sess = flip (^.) (history . ix (sess ^. history_loc)) $ sess

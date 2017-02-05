@@ -11,7 +11,7 @@ import Brick.Widgets.Core ((<=>), padBottom, str, vBox, showCursor)
 import Brick.Widgets.Border (hBorder)
 import Conduit
 import Control.Concurrent (forkIO, newChan, writeChan)
-import Control.Concurrent.Async (concurrently)
+import Control.Concurrent.Async (Concurrently(..), runConcurrently)
 import Control.Concurrent.STM.TQueue
 import Control.Monad (void)
 import qualified Data.ByteString.Char8 as BSC
@@ -38,7 +38,7 @@ import System.Console.ArgParser.Format
 import qualified System.Console.Terminal.Size as T
 import System.Environment (getArgs)
 
-data RecvEvent = RecvEvent BS.ByteString
+data AppEvent = RecvEvent BS.ByteString
 
 data AppArgs = AppArgs String Int deriving (Show)
 argParser :: ParserSpec AppArgs
@@ -60,16 +60,18 @@ main :: IO ()
 main = withSocketsDo . withCorrectArgsDo $ \args -> do
     let AppArgs hostname port = args
     send_queue <- newTQueueIO
-    eventChan <- newChan
-    (scmEnv, configErr) <- loadConfig
-    let sess = (case configErr of
-                    Just err -> writeBufferLn . colorize V.red $ "Config error: " ++ err
-                    Nothing -> id) $ initialSession send_queue keyBindings scmEnv
-    forkIO $ runTCPClient (clientSettings port (BSC.pack hostname)) $ \server ->
-        void $ concurrently
-            (appSource server $$ chanSink eventChan chanWriteRecvEvent (return . const ()))
-            (sourceTQueue send_queue $$ appSink server)
-    void . customMain (V.mkVty def) (Just eventChan) app $ sess
+    event_chan <- newChan
+    scmEnv <- r5rsEnv
+    sess <- loadConfigAction $ initialSession send_queue keyBindings scmEnv
+    case sess of
+         Nothing -> return ()
+         Just sess -> do
+            forkIO $ runTCPClient (clientSettings port (BSC.pack hostname)) $ \server ->
+                void $ runConcurrently $ (,,)
+                    <$> Concurrently (appSource server $$ chanSink event_chan
+                                     chanWriteRecvEvent (return . const ()))
+                    <*> Concurrently (sourceTQueue send_queue $$ appSink server)
+            void . customMain (V.mkVty def) (Just event_chan) app $ sess
     where
         chanSink ch writer closer = do
             CL.mapM_ $ liftIO . writer ch
@@ -77,7 +79,7 @@ main = withSocketsDo . withCorrectArgsDo $ \args -> do
         chanWriteRecvEvent c s = writeChan c (RecvEvent s)
 
 -- Application setup.
-app :: App Sess RecvEvent ()
+app :: App Sess AppEvent ()
 app =
     App { appDraw = drawUI
         , appHandleEvent = handleEvent
@@ -106,14 +108,9 @@ keyBindings = fromList $ map rawKeyBinding rawKeys ++
         case res of
              Right l -> do
                  case l of
-                      Opaque _ -> do
-                          res <- liftIO $ opaqueToAction l sess
-                          case res of
-                               Nothing -> halt sess
-                               Just s -> continue s
+                      Opaque _ -> liftAction (opaqueToAction l) sess
                       x -> continue $ flip writeBufferLn sess $
-                           colorize V.red $ "Expected an action from send-hook, found: " ++
-                               (show x)
+                           colorize V.red $ "Expected an action, found: " ++ (show x)
              Left err -> continue $ flip writeBufferLn sess $ colorize V.red $ show err)
     , ((V.EvKey V.KPageUp []), continue . pageUp)
     , ((V.EvKey V.KPageDown []), continue . pageDown)
@@ -122,12 +119,11 @@ keyBindings = fromList $ map rawKeyBinding rawKeys ++
     , ((V.EvKey (V.KChar 'u') [V.MCtrl]), continue . clearInputLine)
     ]
     where
-        rawKeys = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890!@#$%^&*()_+-=_+[]\\;',./{}|:\"<>? `~"
         rawKeyBinding c = ((V.EvKey (V.KChar c) []), \st -> continue $ addKey c st)
 
 
 -- Handle UI and other app events.
-handleEvent :: Sess -> BrickEvent () RecvEvent -> EventM () (Next Sess)
+handleEvent :: Sess -> BrickEvent () AppEvent -> EventM () (Next Sess)
 handleEvent sess (VtyEvent e) =
     case Map.lookup e (_bindings sess) of
         Just b -> b sess

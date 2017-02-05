@@ -2,11 +2,25 @@ module ScriptInterface
     ( scriptInterface
     , opaqueToAction
     , loadConfig
+    , loadConfigAction
+    , rawKeys
+    , liftAction
+    -- Temporary
+    , keyNameToEvent
+    , partToModifier
+    , partToKey
+    , partsToEvent
     ) where
+import Brick.Main (halt, continue)
+import Brick.Types (EventM, Next)
+import Control.Monad.IO.Class (liftIO)
+import Data.Maybe
+import Data.List (isInfixOf)
+import Data.List.Split (splitOn)
 import qualified Data.Map as M
 import qualified Graphics.Vty as V
 import Language.Scheme.Core
-import Language.Scheme.Types
+import Language.Scheme.Types hiding (bindings)
 import Language.Scheme.Variables
 import Lens.Micro ((&), (.~))
 import Parchment.FString
@@ -16,7 +30,7 @@ import System.Environment.XDG.BaseDir
 scriptInterface :: IO Env
 scriptInterface = r5rsEnv >>= flip extendEnv
     [ ((varNamespace, "del-key"), sessFuncToOpaque delKey)
-    , ((varNamespace, "quit"), actionToOpaque $ return . (const Nothing))
+    , ((varNamespace, "quit"), actionToOpaque $ return . const Nothing)
     , ((varNamespace, "clear-input-line"), sessFuncToOpaque clearInputLine)
     , ((varNamespace, "page-up"), sessFuncToOpaque pageUp)
     , ((varNamespace, "page-down"), sessFuncToOpaque pageDown)
@@ -24,8 +38,9 @@ scriptInterface = r5rsEnv >>= flip extendEnv
     , ((varNamespace, "history-older"), sessFuncToOpaque historyOlder)
     , ((varNamespace, "history-newer"), sessFuncToOpaque historyNewer)
     , ((varNamespace, "do-nothing"), sessFuncToOpaque id)
-    , ((varNamespace, "reload-config"), ioSessFuncToOpaque loadConfigAction)
+    , ((varNamespace, "reload-config"), actionToOpaque loadConfigAction)
     , ((varNamespace, "send"), CustFunc sendToServerWrapper)
+    , ((varNamespace, "bind"), CustFunc bindWrapper)
     , ((varNamespace, "scroll-history"), CustFunc scrollHistoryWrapper)
     , ((varNamespace, "scroll-lines"), CustFunc scrollLinesWrapper)
     , ((varNamespace, "search-backwards"), CustFunc searchBackwardsWrapper)
@@ -39,6 +54,10 @@ scriptInterface = r5rsEnv >>= flip extendEnv
     , ((varNamespace, "hash-get"), CustFunc hashGet)
     , ((varNamespace, "hash-set"), CustFunc hashSet)]
 
+-- Characters displayed directly.
+rawKeys :: String
+rawKeys = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890!@#$%^&*()_+-=_+[]\\;',./{}|:\"<>? `~"
+
 -- Loads the config file. Returns the environment and optionally any errors.
 loadConfig :: IO (Env, Maybe String)
 loadConfig = do
@@ -50,14 +69,24 @@ loadConfig = do
          Left err -> return (scmEnv, Just $ show err)
          Right _ -> return (scmEnv, Nothing)
 
-loadConfigAction :: Sess -> IO Sess
+loadConfigAction :: Sess -> IO (Maybe Sess)
 loadConfigAction sess = do
     (scmEnv, configErr) <- loadConfig
-    return $ case configErr of
-        Just err -> writeBufferLn (colorize V.red ("Config error: " ++ err)) $ sess
-        Nothing -> sess & scm_env .~ scmEnv
+    case configErr of
+        Just err -> return . Just . flip writeBufferLn sess $
+            colorize V.red $ "Config error: " ++ err
+        Nothing -> do
+            let to_eval = List [Atom "load-hook"]
+            res <- evalLisp' scmEnv to_eval
+            case res of
+                 Right l -> do
+                     case l of
+                          Opaque _ -> opaqueToAction l (sess & scm_env .~ scmEnv)
+                          x -> return . Just . writeBufferLn (colorize V.red $
+                               "Expected an action, found: " ++ (show x)) $ sess
+                 Left err -> return . Just . writeBufferLn (colorize V.red $ show err) $ sess
 
--- Helper functions for converting between list types and Sess actions.
+-- Helper functions for converting between lisp types and Sess actions.
 opaqueToAction :: LispVal -> Sess -> IO (Maybe Sess)
 opaqueToAction lv =
     case fromOpaque lv :: ThrowsError (Sess -> IO (Maybe Sess)) of
@@ -74,6 +103,66 @@ ioSessFuncToOpaque :: (Sess -> IO Sess) -> LispVal
 ioSessFuncToOpaque sf = actionToOpaque $ \sess -> do
     res <- sf sess
     return . Just $ res
+
+liftAction :: (Sess -> IO (Maybe Sess)) -> Sess -> EventM () (Next Sess)
+liftAction act sess = do
+    res <- liftIO $ act sess
+    case res of
+        Nothing -> halt sess
+        Just s -> continue s
+
+-- Convert key name to event.
+keyNameToEvent :: String -> Maybe V.Event
+keyNameToEvent = partsToEvent . splitOn "-"
+
+partsToEvent :: [String] -> Maybe V.Event
+partsToEvent [] = Nothing
+partsToEvent [key] = partToKey key >>= return . flip V.EvKey []
+partsToEvent parts = do
+    let mods = map fromJust . filter isJust $ map partToModifier (init parts)
+    partToKey (last parts) >>= return . flip V.EvKey mods
+
+partToKey :: String -> Maybe V.Key
+partToKey s = case s of
+                   "Esc" -> Just V.KEsc
+                   "Backspace" -> Just V.KBS
+                   "Enter" -> Just V.KEnter
+                   "Left" -> Just V.KLeft
+                   "Right" -> Just V.KRight
+                   "Up" -> Just V.KUp
+                   "Down" -> Just V.KDown
+                   "Backtab" -> Just V.KBackTab
+                   "Delete" -> Just V.KDel
+                   "PrintScreen" -> Just V.KPrtScr
+                   "F1" -> Just $ V.KFun 1
+                   "F2" -> Just $ V.KFun 2
+                   "F3" -> Just $ V.KFun 3
+                   "F4" -> Just $ V.KFun 4
+                   "F5" -> Just $ V.KFun 5
+                   "F6" -> Just $ V.KFun 6
+                   "F7" -> Just $ V.KFun 7
+                   "F8" -> Just $ V.KFun 8
+                   "F9" -> Just $ V.KFun 9
+                   "F10" -> Just $ V.KFun 10
+                   "F11" -> Just $ V.KFun 11
+                   "F12" -> Just $ V.KFun 12
+                   "PageUp" -> Just V.KPageUp
+                   "PageDown" -> Just V.KPageDown
+                   "Pause" -> Just V.KPause
+                   "Insert" -> Just V.KIns
+                   "Home" -> Just V.KHome
+                   "End" -> Just V.KEnd
+                   ch | ((length ch == 1) && (ch `isInfixOf` rawKeys)) ->
+                       Just $ V.KChar (ch !! 0)
+                   _ -> Nothing
+
+partToModifier :: String -> Maybe V.Modifier
+partToModifier s = case s of
+                        "S" -> Just V.MShift
+                        "C" -> Just V.MCtrl
+                        "M" -> Just V.MMeta
+                        "A" -> Just V.MAlt
+                        _ -> Nothing
 
 -- Chain a list of monad functions, with each result feeding into the next.
 chainMaybeIO :: [a -> IO (Maybe a)] -> a -> IO (Maybe a)
@@ -117,6 +206,14 @@ writeBufferLnWrapper _ = liftThrows . Left . Default $ "Usage: (println str)"
 sendToServerWrapper :: [LispVal] -> IOThrowsError LispVal
 sendToServerWrapper [(String s)] = liftThrows . Right . ioSessFuncToOpaque $ sendToServer s
 sendToServerWrapper _ = liftThrows . Left . Default $ "Usage: (send <string>)"
+
+bindWrapper :: [LispVal] -> IOThrowsError LispVal
+bindWrapper [(String key), act] =
+    case keyNameToEvent key of
+         Nothing -> liftThrows . Left . Default $ "Error: invalid key: " ++ key
+         Just k -> liftThrows . Right . sessFuncToOpaque . bind k $
+             liftAction . opaqueToAction $ act
+bindWrapper _ = liftThrows . Left . Default $ "Usage: (bind <key> <action>)"
 
 compositeAction :: [LispVal] -> IOThrowsError LispVal
 compositeAction [(List l)] = liftThrows . Right . actionToOpaque . chainMaybeIO $
