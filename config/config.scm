@@ -74,11 +74,24 @@
     ; Quit
     ((string=? cmd "quit")
      quit)
+    ; Reload config.
+    ((string=? cmd "reload")
+     (composite
+       (list
+         reload-config
+         clear-input-line)))
     ; Invalid command.
     (else
       (println (string-append "{rInvalid command: " cmd)))))
 
 ; ===== HOOKS ======
+; Hook to run when the config file is loaded. Returns an action to perform.
+(define (load-hook)
+  (composite
+    (list
+      (bind "F5" (send-hook "test;commands"))
+      (bind "F6" (send-hook "more;tests")))))
+
 ; Hook to run when input is sent. Returns an action to perform.
 (define (send-hook input)
   (cond
