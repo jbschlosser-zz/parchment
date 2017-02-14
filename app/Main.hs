@@ -105,13 +105,14 @@ keyBindings = fromList $ map rawKeyBinding rawKeys ++
         let input = getInput sess
         let to_eval = List [Atom "send-hook", String input]
         res <- liftIO $ evalLisp' (_scm_env sess) to_eval
+        let sesh = clearInputLine . historyNewest $ sess
         case res of
              Right l -> do
                  case l of
-                      Opaque _ -> liftAction (opaqueToAction l) sess
-                      x -> continue $ flip writeBufferLn sess $
+                      Opaque _ -> liftAction (opaqueToAction l) sesh
+                      x -> continue $ flip writeBufferLn sesh $
                            colorize V.red $ "Expected an action, found: " ++ (show x)
-             Left err -> continue $ flip writeBufferLn sess $ colorize V.red $ show err)
+             Left err -> continue $ flip writeBufferLn sesh $ colorize V.red $ show err)
     , ((V.EvKey V.KPageUp []), continue . pageUp)
     , ((V.EvKey V.KPageDown []), continue . pageDown)
     , ((V.EvKey V.KUp []), continue . historyOlder)

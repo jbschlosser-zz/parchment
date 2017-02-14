@@ -11,13 +11,14 @@ module Parchment.Session
     , writeBufferLn
     , bind
     , getInput
-    , nextHistory
+    , addToHistory
     , receiveServerData
     , pageUp
     , pageDown
     , scrollLines
     , historyOlder
     , historyNewer
+    , historyNewest
     , scrollHistory
     , highlightStr
     , unhighlightStr
@@ -123,7 +124,9 @@ getInput :: Sess -> String
 getInput sess = flip (^.) (history . ix (sess ^. history_loc)) $ sess
 
 clearInputLine :: Sess -> Sess
-clearInputLine sess = sess & history . ix (sess ^. history_loc) .~ "" & cursor .~ 0
+clearInputLine sess = sess &
+    history . ix (sess ^. history_loc) .~ "" &
+    cursor .~ 0
 
 writeBuffer :: FString -> Sess -> Sess
 writeBuffer str sess = sess & buffer .~
@@ -174,9 +177,9 @@ pageUp = scrollLines 10
 pageDown :: Sess -> Sess
 pageDown = scrollLines $ -10
 
-nextHistory :: Sess -> Sess
-nextHistory sess = sess &
-    history %~ (++ [""]) &
+addToHistory :: String -> Sess -> Sess
+addToHistory s sess = sess &
+    history %~ (++ [s, ""]) . init &
     history_loc .~ (length $ sess ^. history) & -- based on old history length
     cursor .~ 0
 
@@ -192,6 +195,9 @@ historyOlder = scrollHistory $ -1
 
 historyNewer :: Sess -> Sess
 historyNewer = scrollHistory 1
+
+historyNewest :: Sess -> Sess
+historyNewest sess = scrollHistory (length $ sess ^. history) sess
 
 sendToServer :: String -> Sess -> IO Sess
 sendToServer str sess = do

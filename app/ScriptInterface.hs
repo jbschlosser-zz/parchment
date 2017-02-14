@@ -34,11 +34,11 @@ scriptInterface = r5rsEnv >>= flip extendEnv
     , ((varNamespace, "clear-input-line"), sessFuncToOpaque clearInputLine)
     , ((varNamespace, "page-up"), sessFuncToOpaque pageUp)
     , ((varNamespace, "page-down"), sessFuncToOpaque pageDown)
-    , ((varNamespace, "next-history"), sessFuncToOpaque nextHistory)
     , ((varNamespace, "history-older"), sessFuncToOpaque historyOlder)
     , ((varNamespace, "history-newer"), sessFuncToOpaque historyNewer)
     , ((varNamespace, "do-nothing"), sessFuncToOpaque id)
     , ((varNamespace, "reload-config"), actionToOpaque loadConfigAction)
+    , ((varNamespace, "add-to-history"), CustFunc addToHistoryWrapper)
     , ((varNamespace, "send"), CustFunc sendToServerWrapper)
     , ((varNamespace, "bind"), CustFunc bindWrapper)
     , ((varNamespace, "scroll-history"), CustFunc scrollHistoryWrapper)
@@ -192,6 +192,10 @@ searchBackwardsWrapper :: [LispVal] -> IOThrowsError LispVal
 searchBackwardsWrapper [(String s)] =
     liftThrows . Right . sessFuncToOpaque $ searchBackwards s
 searchBackwardsWrapper _ = liftThrows . Left . Default $ "Usage: (search-backwards <string>)"
+
+addToHistoryWrapper :: [LispVal] -> IOThrowsError LispVal
+addToHistoryWrapper [(String s)] = liftThrows . Right . sessFuncToOpaque . addToHistory $ s
+addToHistoryWrapper _ = liftThrows . Left . Default $ "Usage: (add-to-history str)"
 
 writeBufferWrapper :: [LispVal] -> IOThrowsError LispVal
 writeBufferWrapper [(String s)] = liftThrows . Right . sessFuncToOpaque . writeBuffer $

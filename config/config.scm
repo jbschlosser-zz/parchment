@@ -29,11 +29,14 @@
   (set! *aliases* (hash-set *aliases* alias command)))
 
 ; ----- Convenience functions -----
-; Send input, add to history, and print to scrollback buffer.
-(define (full-send s)
-  (composite (list (send s)
-                   next-history
-                   (println (string-append "{y" s)))))
+; Send input, optionally add to history, and print to scrollback buffer.
+(define (full-send hist s)
+  (if hist
+    (composite (list (send s)
+                     (add-to-history s)
+                     (println (string-append "{y" s))))
+    (composite (list (send s)
+                     (println (string-append "{y" s))))))
 
 ; Print a message.
 (define (message m)
@@ -53,33 +56,26 @@
 ; Function for handling special commands. Returns an action to perform.
 (define (run-command cmd)
   (cond
-    ;((string=? cmd "reload") ; Reload the config file.
-    ; (list (tome:reload-config)
-    ;       (tome:write-scrollback "Reloaded the config file.\n")))
-
     ; Start a new path.
     ((string=? cmd "path")
      (set! saved-path '())
-     next-history)
+     do-nothing)
     ; Add to the path.
     ((string=? cmd "addpath")
      (set! saved-path (cons "n" saved-path))
-     (composite (list (println "added") next-history)))
+     (println "added"))
     ; Backtrack to the path start.
     ((string=? cmd "backtrack")
      (let ((backpath saved-path))
        (composite
          (list (message (string-append "Backtracking " (foldr string-append "" backpath)))
-               (composite (map full-send (map reverse-dir backpath)))))))
+               (composite (map (curry full-send #f) (map reverse-dir backpath)))))))
     ; Quit
     ((string=? cmd "quit")
      quit)
     ; Reload config.
     ((string=? cmd "reload")
-     (composite
-       (list
-         reload-config
-         clear-input-line)))
+     reload-config)
     ; Invalid command.
     (else
       (println (string-append "{rInvalid command: " cmd)))))
@@ -92,27 +88,39 @@
       (bind "F5" (send-hook "test;commands"))
       (bind "F6" (send-hook "more;tests")))))
 
-; Hook to run when input is sent. Returns an action to perform.
-(define (send-hook input)
+; Returns the action to perform for the given input. If hist is true,
+; add the input to the history.
+(define (send-helper hist input)
   (cond
     ; Empty input.
     ((string=? input "")
      (send input))
     ; Multiple commands.
     ((string-contains-char input #\;)
-     (composite (map send-hook (string-split input #\;))))
+     (composite (cons (if hist (add-to-history input) do-nothing)
+                      (map (curry send-helper #f) (string-split input #\;)))))
     ; Aliases (recursive).
     ((hash-contains? *aliases* input)
-     (send-hook (hash-get *aliases* input)))
+     (composite (list 
+                  (if hist (add-to-history input) do-nothing)
+                  (send-helper #f (hash-get *aliases* input)))))
     ; Commands.
     ((string-prefix? "#" input)
-     (run-command (string-drop input 1)))
+     (composite (list
+                  (if hist (add-to-history input) do-nothing)
+                  (run-command (string-drop input 1)))))
     ; Search.
     ((string-prefix? "/" input)
-     (search-backwards (substring input 1 (string-length input))))
+     (composite (list
+                  (if hist (add-to-history input) do-nothing)
+                  (search-backwards (substring input 1 (string-length input))))))
     ; Everything else.
     (else
-      (full-send input))))
+      (full-send hist input))))
+
+; Hook to run when input is sent. Returns an action to perform.
+(define (send-hook input)
+  (send-helper #t input))
 
 ; Hook to run when data is received from the server. Returns an action
 ; to perform.
