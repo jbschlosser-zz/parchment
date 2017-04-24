@@ -148,8 +148,9 @@ searchBackwards str sess =
     case R.compile regexCompOpt regexExecOpt str of
          Left err -> flip writeBufferLn sess . colorize V.red $ "Regex error: " ++ err
          Right regex -> case searchBackwardsHelper regex (sess ^. buffer) (startLine sess) of
-                             Just sr -> highlightStr sr . setSearchRes str (Just sr) .
-                                 unhighlightPrevious $ sess
+                             Just sr@(line,_,_) -> highlightStr sr . setSearchRes str (Just sr) .
+                                 unhighlightPrevious . scrollLines
+                                     ((startLine sess) - line) $ sess
                              Nothing -> writeBufferLn (colorize V.red $ "Not found!") .
                                  setSearchRes str Nothing . unhighlightPrevious $ sess
     where startLine sess =
