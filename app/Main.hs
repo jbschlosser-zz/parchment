@@ -13,7 +13,7 @@ import Conduit
 import Control.Concurrent (forkIO, newChan, writeChan)
 import Control.Concurrent.Async (Concurrently(..), runConcurrently)
 import Control.Concurrent.STM.TQueue
-import Control.Monad (void)
+import Control.Monad (void, (>=>))
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString as BS
 import qualified Data.Conduit.List as CL
@@ -32,6 +32,7 @@ import Lens.Micro ((^.), (&), (.~))
 import Network (withSocketsDo)
 import Parchment.FString
 import Parchment.Session
+import Parchment.Telnet
 import ScriptInterface
 import System.Console.ArgParser
 import System.Console.ArgParser.Format
@@ -62,7 +63,7 @@ main = withSocketsDo . withCorrectArgsDo $ \args -> do
     send_queue <- newTQueueIO
     event_chan <- newChan
     scmEnv <- r5rsEnv
-    sess <- loadConfigAction $ initialSession send_queue keyBindings scmEnv
+    sess <- loadConfigAction $ initialSession send_queue keyBindings telnetHandlers scmEnv
     case sess of
          Nothing -> return ()
          Just sess -> do
@@ -122,6 +123,16 @@ keyBindings = fromList $ map rawKeyBinding rawKeys ++
     where
         rawKeyBinding c = ((V.EvKey (V.KChar c) []), \st -> continue $ addKey c st)
 
+-- Telnet handlers.
+telnetHandlers = fromList $
+    [ ([tIAC, tDO, tTELETYPE], sendRawToServer [tIAC, tWILL, tTELETYPE])
+    , ([tIAC, tSB, tTELETYPE, tSEND, tIAC, tSE], sendRawToServer $
+        [tIAC, tSB, tTELETYPE, tIS] ++ (BS.unpack . BSC.pack $ "parchment") ++ [tIAC, tSE])
+    , ([tIAC, tDO, tNAWS], sendRawToServer [tIAC, tWONT, tNAWS]) -- TODO: Support this.
+    , ([tIAC, tDONT, tNAWS], sendRawToServer [tIAC, tWONT, tNAWS])
+    , ([tIAC, tDO, tGMCP], return . writeBufferLn (colorize V.green "Got GMCP"))
+    , ([tIAC, tNOP], return)
+    ]
 
 -- Handle UI and other app events.
 handleEvent :: Sess -> BrickEvent () AppEvent -> EventM () (Next Sess)
@@ -137,7 +148,14 @@ handleEvent sess (VtyEvent e) =
                             colorize V.magenta $ "No binding found: " ++ show e
 handleEvent sess (AppEvent e) =
     case e of
-        RecvEvent bs -> continue $ receiveServerData sess bs
+        RecvEvent bs -> do
+            let new_sess = receiveServerData sess bs
+            let handlers = map (handleTelnet . BS.unpack) (new_sess ^. telnet_cmds)
+            liftIO (foldr (>=>) return handlers new_sess) >>= continue
+    where handleTelnet bs sess =
+              case Map.lookup bs (sess ^. telnet_handlers) of
+                  Just h -> h sess
+                  Nothing -> return . writeBufferLn (colorize V.red $ show bs) $ sess
 handleEvent sess _ = continue sess
 
 -- Draw the UI.

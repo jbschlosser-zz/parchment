@@ -6,6 +6,7 @@ module Parchment.Session
     , addKey
     , delKey
     , sendToServer
+    , sendRawToServer
     , clearInputLine
     , writeBuffer
     , writeBufferLn
@@ -28,6 +29,8 @@ module Parchment.Session
     , buf_lines
     , cursor
     , scroll_loc
+    , telnet_cmds
+    , telnet_handlers
     , scm_env
     , bindings
     ) where
@@ -48,8 +51,10 @@ import qualified Graphics.Vty as V
 import Language.Scheme.Types hiding (bindings)
 import Lens.Micro ((.~), (^.), (&), (%~), ix)
 import Lens.Micro.TH (makeLenses)
+import Parchment.EscSeq
 import Parchment.FString
-import Parchment.Parsing
+import Parchment.ParseState
+import Parchment.Telnet
 import Text.Parsec hiding (Error, getInput)
 import Text.Regex.TDFA (CompOption(..), ExecOption(..))
 import qualified Text.Regex.TDFA.String as R
@@ -69,6 +74,8 @@ data Sess = Sess
     , _history_loc :: Int
     , _scm_env :: Env
     , _last_search :: Maybe SearchResult -- str, line, start index, end index
+    , _telnet_cmds :: [BS.ByteString]
+    , _telnet_handlers :: Map.Map [Word8] (Sess -> IO Sess)
     }
 data SearchResult = SearchResult
     { _search :: String
@@ -88,8 +95,9 @@ makeLenses ''SearchResult
 
 -- Initial state of the session data.
 initialSession :: TQueue BS.ByteString ->
-    Map.Map V.Event (Sess -> EventM () (Next Sess)) -> Env -> Sess
-initialSession q bindings scm_env = Sess
+    Map.Map V.Event (Sess -> EventM () (Next Sess)) ->
+    Map.Map [Word8] (Sess -> IO Sess) -> Env -> Sess
+initialSession q bindings telnet_handlers scm_env = Sess
     { _buffer = [[]]
     , _buf_lines = 0
     , _cursor = 0
@@ -104,6 +112,8 @@ initialSession q bindings scm_env = Sess
     , _history_loc = 0
     , _scm_env = scm_env
     , _last_search = Nothing
+    , _telnet_cmds = []
+    , _telnet_handlers = telnet_handlers
     }
 
 -- === ACTIONS ===
@@ -205,6 +215,11 @@ sendToServer str sess = do
     atomically $ writeTQueue (sess ^. send_queue) (BSC.pack $ str ++ "\r\n")
     return sess
 
+sendRawToServer :: [Word8] -> Sess -> IO Sess
+sendRawToServer bytes sess = do
+    atomically $ writeTQueue (sess ^. send_queue) $ BS.pack bytes
+    return sess
+
 receiveServerData :: Sess -> BS.ByteString -> Sess
 receiveServerData sess bs = foldl' handleServerByte sess $ BS.unpack bs
 
@@ -270,6 +285,10 @@ handleServerByte sess b =
                              put (sess & char_attr .~ updateCharAttr ((_char_attr sess)) seq)
                              return ()
                          _ -> return ()
+                    return ()
+                Success t -> do
+                    put (sess & telnet_cmds %~ flip (++) [t]
+                         & telnet_state .~ NotInProgress)
                     return ()
                 _ -> return ()
         ) sess

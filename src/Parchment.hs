@@ -1,7 +1,11 @@
 module Parchment
-    ( module Parchment.Parsing
+    ( module Parchment.EscSeq
+    , module Parchment.ParseState
     , module Parchment.Session
+    , module Parchment.Telnet
     ) where
 
-import Parchment.Parsing
+import Parchment.EscSeq
+import Parchment.ParseState
 import Parchment.Session
+import Parchment.Telnet
