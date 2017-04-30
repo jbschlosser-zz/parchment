@@ -30,7 +30,6 @@ module Parchment.Session
     , cursor
     , scroll_loc
     , telnet_cmds
-    , telnet_handlers
     , scm_env
     , bindings
     ) where
@@ -75,7 +74,6 @@ data Sess = Sess
     , _scm_env :: Env
     , _last_search :: Maybe SearchResult -- str, line, start index, end index
     , _telnet_cmds :: [BS.ByteString]
-    , _telnet_handlers :: Map.Map [Word8] (Sess -> IO Sess)
     }
 data SearchResult = SearchResult
     { _search :: String
@@ -95,9 +93,8 @@ makeLenses ''SearchResult
 
 -- Initial state of the session data.
 initialSession :: TQueue BS.ByteString ->
-    Map.Map V.Event (Sess -> EventM () (Next Sess)) ->
-    Map.Map [Word8] (Sess -> IO Sess) -> Env -> Sess
-initialSession q bindings telnet_handlers scm_env = Sess
+    Map.Map V.Event (Sess -> EventM () (Next Sess)) -> Env -> Sess
+initialSession q bindings scm_env = Sess
     { _buffer = [[]]
     , _buf_lines = 0
     , _cursor = 0
@@ -113,7 +110,6 @@ initialSession q bindings telnet_handlers scm_env = Sess
     , _scm_env = scm_env
     , _last_search = Nothing
     , _telnet_cmds = []
-    , _telnet_handlers = telnet_handlers
     }
 
 -- === ACTIONS ===

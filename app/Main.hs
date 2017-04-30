@@ -20,11 +20,13 @@ import qualified Data.Conduit.List as CL
 import Data.Conduit.Network
 import Data.Conduit.TQueue (sourceTQueue)
 import Data.Default
+import Data.List (isPrefixOf)
 import Data.Map (fromList)
 import qualified Data.Map.Lazy as Map
 import Data.Maybe (fromJust)
 import Data.Text (singleton)
 import Data.Text.Markup ((@@))
+import Data.Word (Word8)
 import qualified Graphics.Vty as V
 import Language.Scheme.Core
 import Language.Scheme.Types
@@ -63,7 +65,7 @@ main = withSocketsDo . withCorrectArgsDo $ \args -> do
     send_queue <- newTQueueIO
     event_chan <- newChan
     scmEnv <- r5rsEnv
-    sess <- loadConfigAction $ initialSession send_queue keyBindings telnetHandlers scmEnv
+    sess <- loadConfigAction $ initialSession send_queue keyBindings scmEnv
     case sess of
          Nothing -> return ()
          Just sess -> do
@@ -123,17 +125,6 @@ keyBindings = fromList $ map rawKeyBinding rawKeys ++
     where
         rawKeyBinding c = ((V.EvKey (V.KChar c) []), \st -> continue $ addKey c st)
 
--- Telnet handlers.
-telnetHandlers = fromList $
-    [ ([tIAC, tDO, tTELETYPE], sendRawToServer [tIAC, tWILL, tTELETYPE])
-    , ([tIAC, tSB, tTELETYPE, tSEND, tIAC, tSE], sendRawToServer $
-        [tIAC, tSB, tTELETYPE, tIS] ++ (BS.unpack . BSC.pack $ "parchment") ++ [tIAC, tSE])
-    , ([tIAC, tDO, tNAWS], sendRawToServer [tIAC, tWONT, tNAWS]) -- TODO: Support this.
-    , ([tIAC, tDONT, tNAWS], sendRawToServer [tIAC, tWONT, tNAWS])
-    , ([tIAC, tDO, tGMCP], return . writeBufferLn (colorize V.green "Got GMCP"))
-    , ([tIAC, tNOP], return)
-    ]
-
 -- Handle UI and other app events.
 handleEvent :: Sess -> BrickEvent () AppEvent -> EventM () (Next Sess)
 handleEvent sess (VtyEvent e) =
@@ -152,11 +143,32 @@ handleEvent sess (AppEvent e) =
             let new_sess = receiveServerData sess bs
             let handlers = map (handleTelnet . BS.unpack) (new_sess ^. telnet_cmds)
             liftIO (foldr (>=>) return handlers new_sess) >>= continue
-    where handleTelnet bs sess =
-              case Map.lookup bs (sess ^. telnet_handlers) of
-                  Just h -> h sess
-                  Nothing -> return . writeBufferLn (colorize V.red $ show bs) $ sess
 handleEvent sess _ = continue sess
+
+leave :: Int -> [a] -> [a]
+leave n lst = take (length lst - n) lst
+
+handleTelnet :: [Word8] -> Sess -> IO Sess
+handleTelnet cmd
+    | cmd == [tIAC, tDO, tTELETYPE] = sendRawToServer [tIAC, tWONT, tTELETYPE]
+    -- Probably not a good idea to send this..
+    -- | cmd == [tIAC, tSB, tTELETYPE, tSEND, tIAC, tSE] = sendRawToServer $
+    --     [tIAC, tSB, tTELETYPE, tIS] ++ (BS.unpack . BSC.pack $ "parchment") ++ [tIAC, tSE]
+    | cmd == [tIAC, tDONT, tNAWS] = sendRawToServer [tIAC, tWONT, tNAWS]
+    | cmd == [tIAC, tWILL, tGMCP] = sendRawToServer [tIAC, tDO, tGMCP]
+    | [tIAC, tSB, tGMCP] `isPrefixOf` cmd =
+        handleGmcp (BSC.unpack . BS.pack . leave 2 . drop 3 $ cmd)
+    | cmd == [tIAC, tNOP] = return
+    -- TODO: Support these.
+    | cmd == [tIAC, tDO, tNAWS] = sendRawToServer [tIAC, tWONT, tNAWS]
+    | cmd == [tIAC, tWILL, tMXP] = sendRawToServer [tIAC, tDONT, tMXP]
+    | cmd == [tIAC, tWILL, tMCCP2] = sendRawToServer [tIAC, tDONT, tMCCP2]
+    | cmd == [tIAC, tWILL, tMSSP] = sendRawToServer [tIAC, tDONT, tMSSP]
+    | cmd == [tIAC, tWILL, tMSDP] = sendRawToServer [tIAC, tDONT, tMSDP]
+    | otherwise = return . writeBufferLn (colorize V.red $ show cmd)
+
+handleGmcp :: String -> Sess -> IO Sess
+handleGmcp cmd = return . writeBufferLn (colorize V.green cmd)
 
 -- Draw the UI.
 drawUI :: Sess -> [Widget()]

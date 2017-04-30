@@ -21,6 +21,10 @@ module Parchment.Telnet
     , tSEND
     , tIS
     , tNAWS
+    , tMXP
+    , tMCCP2
+    , tMSSP
+    , tMSDP
     ) where
 
 import qualified Data.ByteString as BS
@@ -50,11 +54,15 @@ tDONT = 254 -- Indicates the demand that the other party stop performing,
             -- or confirmation that you are no longer expecting the other party
             -- to perform, the indicated option.                     
 tIAC = 255 -- Interpret As Command. Indicates the start of a telnet option negotiation.
-tGMCP = 0xC9 :: Word8
+tGMCP = 201 :: Word8
 tTELETYPE = 24 :: Word8
 tSEND = 1 :: Word8
 tIS = 0 :: Word8
 tNAWS = 31 :: Word8
+tMXP = 91 :: Word8
+tMCCP2 = 86 :: Word8
+tMSSP = 70 :: Word8
+tMSDP = 69 :: Word8
 
 twoByteCommands :: [Word8]
 twoByteCommands = [tIAC, tNOP, tDATA_MARK, tBREAK, tIP,
