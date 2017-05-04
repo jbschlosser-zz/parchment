@@ -25,12 +25,13 @@ import Language.Scheme.Variables
 import Lens.Micro ((&), (.~))
 import Parchment.FString
 import Parchment.Session
+import Parchment.Util
 import System.Environment.XDG.BaseDir
 
 scriptInterface :: IO Env
 scriptInterface = r5rsEnv >>= flip extendEnv
     [ ((varNamespace, "del-key"), sessFuncToOpaque delKey)
-    , ((varNamespace, "quit"), actionToOpaque $ return . const Nothing)
+    , ((varNamespace, "quit"), actionToOpaque $ returnMaybe . const Nothing)
     , ((varNamespace, "clear-input-line"), sessFuncToOpaque clearInputLine)
     , ((varNamespace, "page-up"), sessFuncToOpaque pageUp)
     , ((varNamespace, "page-down"), sessFuncToOpaque pageDown)
@@ -69,44 +70,46 @@ loadConfig = do
          Left err -> return (scmEnv, Just $ show err)
          Right _ -> return (scmEnv, Nothing)
 
-loadConfigAction :: Sess -> IO (Maybe Sess)
+loadConfigAction :: Sess -> IOMaybe Sess
 loadConfigAction sess = do
-    (scmEnv, configErr) <- loadConfig
+    (scmEnv, configErr) <- liftIO loadConfig
     case configErr of
-        Just err -> return . Just . flip writeBufferLn sess $
+        Just err -> returnMaybe . Just . flip writeBufferLn sess $
             colorize V.red $ "Config error: " ++ err
         Nothing -> do
             let to_eval = List [Atom "load-hook"]
-            res <- evalLisp' scmEnv to_eval
+            res <- liftIO $ evalLisp' scmEnv to_eval
             case res of
                  Right l -> do
                      case l of
                           Opaque _ -> opaqueToAction l (sess & scm_env .~ scmEnv)
-                          x -> return . Just . writeBufferLn (colorize V.red $
+                          x -> returnMaybe . Just . writeBufferLn (colorize V.red $
                                "Expected an action, found: " ++ (show x)) $ sess
-                 Left err -> return . Just . writeBufferLn (colorize V.red $ show err) $ sess
+                 Left err -> returnMaybe . Just . writeBufferLn
+                     (colorize V.red $ show err) $ sess
 
 -- Helper functions for converting between lisp types and Sess actions.
-opaqueToAction :: LispVal -> Sess -> IO (Maybe Sess)
+opaqueToAction :: LispVal -> Sess -> IOMaybe Sess
 opaqueToAction lv =
-    case fromOpaque lv :: ThrowsError (Sess -> IO (Maybe Sess)) of
+    case fromOpaque lv :: ThrowsError (Sess -> IOMaybe Sess) of
          Right f -> f
-         Left err -> return . Just . writeBufferLn (colorize V.red $ "Error: " ++ (show err))
+         Left err -> returnMaybe . Just . writeBufferLn
+             (colorize V.red $ "Error: " ++ (show err))
 
-actionToOpaque :: (Sess -> IO (Maybe Sess)) -> LispVal
+actionToOpaque :: (Sess -> IOMaybe Sess) -> LispVal
 actionToOpaque = toOpaque
 
 sessFuncToOpaque :: (Sess -> Sess) -> LispVal
-sessFuncToOpaque sf = actionToOpaque $ return . Just . sf
+sessFuncToOpaque sf = actionToOpaque $ returnMaybe . Just . sf
 
 ioSessFuncToOpaque :: (Sess -> IO Sess) -> LispVal
 ioSessFuncToOpaque sf = actionToOpaque $ \sess -> do
-    res <- sf sess
-    return . Just $ res
+    res <- liftIO $ sf sess
+    returnMaybe . Just $ res
 
-liftAction :: (Sess -> IO (Maybe Sess)) -> Sess -> EventM () (Next Sess)
+liftAction :: (Sess -> IOMaybe Sess) -> Sess -> EventM () (Next Sess)
 liftAction act sess = do
-    res <- liftIO $ act sess
+    res <- liftIO . runIOMaybe $ act sess
     case res of
         Nothing -> halt sess
         Just s -> continue s
@@ -164,15 +167,6 @@ partToModifier s = case s of
                         "A" -> Just V.MAlt
                         _ -> Nothing
 
--- Chain a list of monad functions, with each result feeding into the next.
-chainMaybeIO :: [a -> IO (Maybe a)] -> a -> IO (Maybe a)
-chainMaybeIO [] a = return . Just $ a
-chainMaybeIO (x:xs) a = do
-    res <- x a
-    case res of
-         Nothing -> return Nothing
-         Just r -> chainMaybeIO xs r
-
 -- === BINDING WRAPPERS. ===
 addKeyWrapper :: [LispVal] -> IOThrowsError LispVal
 addKeyWrapper [(Char c)] = liftThrows . Right . sessFuncToOpaque $ addKey c
@@ -220,7 +214,7 @@ bindWrapper [(String key), act] =
 bindWrapper _ = liftThrows . Left . Default $ "Usage: (bind <key> <action>)"
 
 compositeAction :: [LispVal] -> IOThrowsError LispVal
-compositeAction [(List l)] = liftThrows . Right . actionToOpaque . chainMaybeIO $
+compositeAction [(List l)] = liftThrows . Right . actionToOpaque . chainM $
     map opaqueToAction l
 compositeAction _ = liftThrows . Left . Default $ "Usage: (composite <list>)"
 

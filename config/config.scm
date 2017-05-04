@@ -86,7 +86,11 @@
   (composite
     (list
       (bind "F5" (send-hook "test;commands"))
-      (bind "F6" (send-hook "more;tests")))))
+      (bind "F6" (send-hook "more;tests"))
+      (bind "M-G" (scroll-lines -9999999))
+      (bind "M-g" (scroll-lines 9999999))
+      (bind "S-Up" (scroll-lines 1))
+      (bind "S-Down" (scroll-lines -1)))))
 
 ; Returns the action to perform for the given input. If hist is true,
 ; add the input to the history.
@@ -121,6 +125,10 @@
 ; Hook to run when input is sent. Returns an action to perform.
 (define (send-hook input)
   (send-helper #t input))
+
+; Hook to run when GMCP is received.
+(define (gmcp-hook cmd)
+  (println (string-append "GMCP: " cmd)))
 
 ; Hook to run when data is received from the server. Returns an action
 ; to perform.

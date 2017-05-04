@@ -13,7 +13,7 @@ import Conduit
 import Control.Concurrent (forkIO, newChan, writeChan)
 import Control.Concurrent.Async (Concurrently(..), runConcurrently)
 import Control.Concurrent.STM.TQueue
-import Control.Monad (void, (>=>))
+import Control.Monad (void)
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString as BS
 import qualified Data.Conduit.List as CL
@@ -35,6 +35,7 @@ import Network (withSocketsDo)
 import Parchment.FString
 import Parchment.Session
 import Parchment.Telnet
+import Parchment.Util
 import ScriptInterface
 import System.Console.ArgParser
 import System.Console.ArgParser.Format
@@ -65,7 +66,7 @@ main = withSocketsDo . withCorrectArgsDo $ \args -> do
     send_queue <- newTQueueIO
     event_chan <- newChan
     scmEnv <- r5rsEnv
-    sess <- loadConfigAction $ initialSession send_queue keyBindings scmEnv
+    sess <- runIOMaybe . loadConfigAction $ initialSession send_queue keyBindings scmEnv
     case sess of
          Nothing -> return ()
          Just sess -> do
@@ -142,33 +143,42 @@ handleEvent sess (AppEvent e) =
         RecvEvent bs -> do
             let new_sess = receiveServerData sess bs
             let handlers = map (handleTelnet . BS.unpack) (new_sess ^. telnet_cmds)
-            liftIO (foldr (>=>) return handlers new_sess) >>= continue
+            liftAction (chainM handlers) new_sess
 handleEvent sess _ = continue sess
 
 leave :: Int -> [a] -> [a]
 leave n lst = take (length lst - n) lst
 
-handleTelnet :: [Word8] -> Sess -> IO Sess
+handleTelnet :: [Word8] -> Sess -> IOMaybe Sess
 handleTelnet cmd
-    | cmd == [tIAC, tDO, tTELETYPE] = sendRawToServer [tIAC, tWONT, tTELETYPE]
+    | cmd == [tIAC, tDO, tTELETYPE] = liftIO . sendRawToServer [tIAC, tWONT, tTELETYPE]
     -- Probably not a good idea to send this..
     -- | cmd == [tIAC, tSB, tTELETYPE, tSEND, tIAC, tSE] = sendRawToServer $
     --     [tIAC, tSB, tTELETYPE, tIS] ++ (BS.unpack . BSC.pack $ "parchment") ++ [tIAC, tSE]
-    | cmd == [tIAC, tDONT, tNAWS] = sendRawToServer [tIAC, tWONT, tNAWS]
-    | cmd == [tIAC, tWILL, tGMCP] = sendRawToServer [tIAC, tDO, tGMCP]
+    | cmd == [tIAC, tDONT, tNAWS] = liftIO . sendRawToServer [tIAC, tWONT, tNAWS]
+    | cmd == [tIAC, tWILL, tGMCP] = liftIO . sendRawToServer [tIAC, tDO, tGMCP]
     | [tIAC, tSB, tGMCP] `isPrefixOf` cmd =
         handleGmcp (BSC.unpack . BS.pack . leave 2 . drop 3 $ cmd)
     | cmd == [tIAC, tNOP] = return
     -- TODO: Support these.
-    | cmd == [tIAC, tDO, tNAWS] = sendRawToServer [tIAC, tWONT, tNAWS]
-    | cmd == [tIAC, tWILL, tMXP] = sendRawToServer [tIAC, tDONT, tMXP]
-    | cmd == [tIAC, tWILL, tMCCP2] = sendRawToServer [tIAC, tDONT, tMCCP2]
-    | cmd == [tIAC, tWILL, tMSSP] = sendRawToServer [tIAC, tDONT, tMSSP]
-    | cmd == [tIAC, tWILL, tMSDP] = sendRawToServer [tIAC, tDONT, tMSDP]
+    | cmd == [tIAC, tDO, tNAWS] = liftIO . sendRawToServer [tIAC, tWONT, tNAWS]
+    | cmd == [tIAC, tWILL, tMXP] = liftIO . sendRawToServer [tIAC, tDONT, tMXP]
+    | cmd == [tIAC, tWILL, tMCCP2] = liftIO . sendRawToServer [tIAC, tDONT, tMCCP2]
+    | cmd == [tIAC, tWILL, tMSSP] = liftIO . sendRawToServer [tIAC, tDONT, tMSSP]
+    | cmd == [tIAC, tWILL, tMSDP] = liftIO . sendRawToServer [tIAC, tDONT, tMSDP]
     | otherwise = return . writeBufferLn (colorize V.red $ show cmd)
 
-handleGmcp :: String -> Sess -> IO Sess
-handleGmcp cmd = return . writeBufferLn (colorize V.green cmd)
+handleGmcp :: String -> Sess -> IOMaybe Sess
+handleGmcp cmd sess = do
+    let to_eval = List [Atom "gmcp-hook", String cmd]
+    res <- liftIO $ evalLisp' (sess ^. scm_env) to_eval
+    case res of
+        Right l -> do
+            case l of
+                Opaque _ -> opaqueToAction l sess
+                x -> return . flip writeBufferLn sess $
+                    colorize V.red $ "Expected an action, found: " ++ (show x)
+        Left err -> return . flip writeBufferLn sess $ colorize V.red $ show err
 
 -- Draw the UI.
 drawUI :: Sess -> [Widget()]
