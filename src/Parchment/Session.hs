@@ -160,9 +160,8 @@ searchBackwards str sess =
                                  setSearchRes str Nothing . unhighlightPrevious $ sess
     where startLine sess =
               case sess ^. last_search of
-                   Nothing -> RB.length (sess ^. buffer) - 1
-                   Just sr -> if (sr ^. search) == str then
-                       (sr ^. line) - 1 else RB.length (sess ^. buffer) - 1
+                   Nothing -> 0
+                   Just sr -> if (sr ^. search) == str then (sr ^. line) + 1 else 0
           unhighlightPrevious sess =
               case sess ^. last_search of
                    Nothing -> sess
@@ -170,8 +169,7 @@ searchBackwards str sess =
                        unhighlightStr ((sr ^. line), (sr ^. start), (sr ^. end)) $ sess
           setSearchRes str (Just (line, start, end)) sess =
               sess & last_search .~ Just (searchResult str line start end)
-          setSearchRes _ Nothing sess =
-              sess & last_search .~ Nothing
+          setSearchRes _ Nothing sess = sess & last_search .~ Nothing
 
 scrollLines :: Int -> Sess -> Sess
 scrollLines n sess = sess & scroll_loc %~
@@ -220,11 +218,14 @@ receiveServerData sess bs = foldl' handleServerByte sess $ BS.unpack bs
 
 -- === HELPER FUNCTIONS ===
 -- (line, start index, end index), modification func, session
--- TODO: Fix this!!
 modifyBuffer :: (Int, Int, Int) -> (FChar -> FChar) -> Sess -> Sess
-modifyBuffer (line, start, end) func = id
-    -- foldr (flip (.)) id $ flip map [start..end] $
-    --     \i -> \sess -> sess & (buffer . ix line . ix i) %~ func
+modifyBuffer (line, start, end) func sess =
+    sess & buffer %~ \buf -> RB.update buf line new_str
+    where line_str = (sess ^. buffer) RB.! line
+          replaceAtIndex f n ls = a ++ ((f item):b)
+              where (a, (item:b)) = splitAt n ls
+          new_str = (foldr (flip (.)) id $ flip map [start..end] $
+                    replaceAtIndex func) line_str
 
 regexCompOpt :: CompOption
 regexCompOpt = CompOption
@@ -244,10 +245,9 @@ searchBackwardsHelper :: R.Regex -> RB.RingBuffer FString -> Int -> Maybe (Int, 
 searchBackwardsHelper r buf start_line =
     case S.findIndexL isJust search_results of
          Nothing -> Nothing
-         Just idx -> Just (start_line - idx, start, start + len - 1)
+         Just idx -> Just (start_line + idx, start, start + len - 1)
              where (start, len) = fromJust (S.index search_results idx)
-    where search_results :: S.Seq (Maybe (Int, Int))
-          search_results = fmap (findInFString r) . S.reverse . RB.take (start_line + 1) $ buf
+    where search_results = fmap (findInFString r) . RB.drop start_line $ buf
 
 -- Returns (start, length) if found; Nothing otherwise.
 findInFString :: R.Regex -> FString -> Maybe (Int, Int)
@@ -272,10 +272,9 @@ handleServerByte sess b =
                     case new_esc_seq of
                          NotInProgress -> do
                              sess <- get
-                             put (sess & buffer .~ addBufferChar
-                                 (sess ^. buffer) (FChar
-                                     { _ch = BSC.head . BS.singleton $ b
-                                     , _attr = (_char_attr sess)}))
+                             put (sess & buffer %~ flip addBufferChar
+                                 (FChar { _ch = BSC.head . BS.singleton $ b
+                                        , _attr = (_char_attr sess)}))
                              return ()
                          Success seq -> do
                              sess <- get
@@ -301,7 +300,7 @@ addBufferChar buf c =
         RB.push buf [c]
     else
         -- Add char to end of last line.
-        RB.updateMostRecent buf ((buf RB.! 0) ++ [c])
+        RB.update buf 0 ((buf RB.! 0) ++ [c])
 
 clampExclusive :: Int -> Int -> Int -> Int
 clampExclusive min max = clamp min (max - 1)

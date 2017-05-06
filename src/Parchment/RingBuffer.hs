@@ -6,7 +6,7 @@ module Parchment.RingBuffer
     , length
     , capacity
     , (!)
-    , updateMostRecent
+    , update
     , drop
     , take
     , toSeq
@@ -55,10 +55,10 @@ toSeq :: RingBuffer a -> S.Seq a
 toSeq (RB (vec, len)) = S.take len vec
 {-# INLINE toSeq #-}
 
-updateMostRecent :: RingBuffer a -> a -> RingBuffer a
-updateMostRecent (RB (_, 0)) _ = error "Nothing to update in the RingBuffer"
-updateMostRecent (RB (vec, len)) el = RB (S.update 0 el vec, len)
-{-# INLINE updateMostRecent #-}
+update :: RingBuffer a -> Int -> a -> RingBuffer a
+update (RB (vec, len)) ind el | ind >= len = error "index out of bounds"
+                              | otherwise = RB (S.update ind el vec, len)
+{-# INLINE update #-}
 
 -- | Push a new value into a RingBuffer.  The following will hold:
 --     NewRingBuffer ! 0 === added element
