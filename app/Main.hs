@@ -24,8 +24,9 @@ import Data.List (isPrefixOf)
 import Data.Map (fromList)
 import qualified Data.Map.Lazy as Map
 import Data.Maybe (fromJust)
+import qualified Data.Sequence as S
 import Data.Text (singleton)
-import Data.Text.Markup ((@@))
+import Data.Text.Markup ((@@), Markup)
 import Data.Word (Word8)
 import qualified Graphics.Vty as V
 import Language.Scheme.Core
@@ -33,6 +34,7 @@ import Language.Scheme.Types
 import Lens.Micro ((^.), (&), (.~))
 import Network (withSocketsDo)
 import Parchment.FString
+import qualified Parchment.RingBuffer as RB
 import Parchment.Session
 import Parchment.Telnet
 import Parchment.Util
@@ -198,13 +200,14 @@ drawUI sess =
 nonBufferLines :: Int
 nonBufferLines = 2
 
-drawBuffer :: [FString] -> Int -> Widget()
-drawBuffer lines scroll = 
+drawBuffer :: RB.RingBuffer FString -> Int -> Widget()
+drawBuffer buf scroll = 
     Widget Greedy Greedy $ do
         ctx <- getContext
         let num = ctx ^. availHeightL
-        let start = max 0 $ length lines - scroll - num
-        render $ foldr (<=>) (str "") $ map drawBufferLine $ take num $ drop start lines
+        render $ foldr (<=>) (str "") . fmap drawBufferLine .
+            S.reverse . S.take num . RB.drop scroll $ buf
     where drawBufferLine [] = str " " -- handle blank case
-          drawBufferLine s = markup . mconcat . map fcharToMarkup $ s
+          drawBufferLine fs = markup . mconcat . fmap fcharToMarkup $ fs
+          fcharToMarkup :: FChar -> Markup V.Attr
           fcharToMarkup = \t -> (singleton $ _ch t) @@ (_attr t)

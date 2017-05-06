@@ -42,9 +42,10 @@ import Control.Monad.STM (atomically)
 import Data.Array ((!))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
-import Data.List (foldl', findIndex)
+import Data.List (foldl')
 import qualified Data.Map.Lazy as Map
 import Data.Maybe (isJust, fromJust)
+import qualified Data.Sequence as S
 import Data.Word (Word8)
 import qualified Graphics.Vty as V
 import Language.Scheme.Types hiding (bindings)
@@ -53,13 +54,14 @@ import Lens.Micro.TH (makeLenses)
 import Parchment.EscSeq
 import Parchment.FString
 import Parchment.ParseState
+import qualified Parchment.RingBuffer as RB
 import Parchment.Telnet
 import Text.Parsec hiding (Error, getInput)
 import Text.Regex.TDFA (CompOption(..), ExecOption(..))
 import qualified Text.Regex.TDFA.String as R
 
 data Sess = Sess
-    { _buffer :: [FString]
+    { _buffer :: RB.RingBuffer FString
     , _buf_lines :: Int
     , _cursor :: Int
     , _bindings :: Map.Map V.Event (Sess -> EventM () (Next Sess))
@@ -68,7 +70,6 @@ data Sess = Sess
     , _esc_seq_state :: ParseState BS.ByteString
     , _char_attr :: V.Attr
     , _scroll_loc :: Int
-    , _scroll_limit :: Int
     , _history :: [String]
     , _history_loc :: Int
     , _scm_env :: Env
@@ -95,7 +96,7 @@ makeLenses ''SearchResult
 initialSession :: TQueue BS.ByteString ->
     Map.Map V.Event (Sess -> EventM () (Next Sess)) -> Env -> Sess
 initialSession q bindings scm_env = Sess
-    { _buffer = [[]]
+    { _buffer = RB.newInit emptyF 50000 -- lines in buffer
     , _buf_lines = 0
     , _cursor = 0
     , _bindings = bindings
@@ -104,7 +105,6 @@ initialSession q bindings scm_env = Sess
     , _esc_seq_state = NotInProgress
     , _char_attr = V.defAttr
     , _scroll_loc = 0
-    , _scroll_limit = 10000 -- lines in buffer
     , _history = [""]
     , _history_loc = 0
     , _scm_env = scm_env
@@ -135,8 +135,7 @@ clearInputLine sess = sess &
     cursor .~ 0
 
 writeBuffer :: FString -> Sess -> Sess
-writeBuffer str sess = sess & buffer .~
-    foldl' (addBufferChar $ sess ^. scroll_limit) (sess ^. buffer) str
+writeBuffer str sess = sess & buffer .~ foldl' addBufferChar (sess ^. buffer) str
 
 writeBufferLn :: FString -> Sess -> Sess
 writeBufferLn str = writeBuffer (str ++ [FChar { _ch = '\n', _attr = V.defAttr}])
@@ -161,9 +160,9 @@ searchBackwards str sess =
                                  setSearchRes str Nothing . unhighlightPrevious $ sess
     where startLine sess =
               case sess ^. last_search of
-                   Nothing -> length (sess ^. buffer) - 1
+                   Nothing -> RB.length (sess ^. buffer) - 1
                    Just sr -> if (sr ^. search) == str then
-                       (sr ^. line) - 1 else length (sess ^. buffer) - 1
+                       (sr ^. line) - 1 else RB.length (sess ^. buffer) - 1
           unhighlightPrevious sess =
               case sess ^. last_search of
                    Nothing -> sess
@@ -176,7 +175,7 @@ searchBackwards str sess =
 
 scrollLines :: Int -> Sess -> Sess
 scrollLines n sess = sess & scroll_loc %~
-    (\sl -> clamp 0 (length (sess ^. buffer) - (sess ^. buf_lines)) $ sl + n)
+    (\sl -> clamp 0 (RB.length (sess ^. buffer) - (sess ^. buf_lines)) $ sl + n)
 
 pageUp :: Sess -> Sess
 pageUp = scrollLines 10
@@ -221,10 +220,11 @@ receiveServerData sess bs = foldl' handleServerByte sess $ BS.unpack bs
 
 -- === HELPER FUNCTIONS ===
 -- (line, start index, end index), modification func, session
+-- TODO: Fix this!!
 modifyBuffer :: (Int, Int, Int) -> (FChar -> FChar) -> Sess -> Sess
-modifyBuffer (line, start, end) func =
-    foldr (flip (.)) id $ flip map [start..end] $
-        \i -> \sess -> sess & (buffer . ix line . ix i) %~ func
+modifyBuffer (line, start, end) func = id
+    -- foldr (flip (.)) id $ flip map [start..end] $
+    --     \i -> \sess -> sess & (buffer . ix line . ix i) %~ func
 
 regexCompOpt :: CompOption
 regexCompOpt = CompOption
@@ -240,13 +240,14 @@ regexExecOpt = ExecOption {captureGroups = True}
 
 -- Input: Search string, buffer, starting line.
 -- Returns: Line, start index, end index if found; Nothing otherwise.
-searchBackwardsHelper :: R.Regex -> [FString] -> Int -> Maybe (Int, Int, Int)
+searchBackwardsHelper :: R.Regex -> RB.RingBuffer FString -> Int -> Maybe (Int, Int, Int)
 searchBackwardsHelper r buf start_line =
-    case findIndex isJust search_results of
+    case S.findIndexL isJust search_results of
          Nothing -> Nothing
          Just idx -> Just (start_line - idx, start, start + len - 1)
-             where (start, len) = fromJust (search_results !! idx)
-    where search_results = map (findInFString r) . reverse . take (start_line + 1) $ buf
+             where (start, len) = fromJust (S.index search_results idx)
+    where search_results :: S.Seq (Maybe (Int, Int))
+          search_results = fmap (findInFString r) . S.reverse . RB.take (start_line + 1) $ buf
 
 -- Returns (start, length) if found; Nothing otherwise.
 findInFString :: R.Regex -> FString -> Maybe (Int, Int)
@@ -272,7 +273,7 @@ handleServerByte sess b =
                          NotInProgress -> do
                              sess <- get
                              put (sess & buffer .~ addBufferChar
-                                 (sess ^. scroll_limit) (sess ^. buffer) (FChar
+                                 (sess ^. buffer) (FChar
                                      { _ch = BSC.head . BS.singleton $ b
                                      , _attr = (_char_attr sess)}))
                              return ()
@@ -289,22 +290,18 @@ handleServerByte sess b =
                 _ -> return ()
         ) sess
 
-addBufferChar :: Int -> [FString] -> FChar -> [FString]
-addBufferChar limit buf c =
+addBufferChar :: RB.RingBuffer FString -> FChar -> RB.RingBuffer FString
+addBufferChar buf c =
     if (_ch c) == '\n' then
-        -- Add new empty line.
-        if length buf >= limit then
-            (tail buf) ++ [[]]
-        else
-            buf ++ [[]]
+        RB.push buf emptyF
     else if (_ch c) == '\r' then
         buf
-    else if length buf == 0 then
+    else if RB.length buf == 0 then
         -- Init with char.
-        [[c]]
+        RB.push buf [c]
     else
         -- Add char to end of last line.
-        init buf ++ [(last buf ++ [c])]
+        RB.updateMostRecent buf ((buf RB.! 0) ++ [c])
 
 clampExclusive :: Int -> Int -> Int -> Int
 clampExclusive min max = clamp min (max - 1)

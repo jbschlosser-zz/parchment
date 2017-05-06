@@ -3,6 +3,7 @@
 module Parchment.FString
     ( FChar(..)
     , FString
+    , emptyF
     , applyAttr
     , colorize
     , withStyle
@@ -19,6 +20,9 @@ instance Show FChar where
     show FChar {_ch = ch, _attr = _} = [ch]
 
 type FString = [FChar]
+
+emptyF :: FString
+emptyF = []
 
 applyAttr :: V.Attr -> String -> FString
 applyAttr a str = map (\c -> FChar {_ch = c, _attr = a}) str 
