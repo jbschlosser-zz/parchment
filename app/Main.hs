@@ -143,10 +143,18 @@ handleEvent sess (VtyEvent e) =
 handleEvent sess (AppEvent e) =
     case e of
         RecvEvent bs -> do
-            let new_sess = receiveServerData sess bs
+            -- Receive and process the server data.
+            let sess2 = receiveServerData sess bs
+            -- Extract received text.
+            let recv_text = sess2 ^. recv_state ^. text
+            -- Reset received text for next time.
+            let sess3 = sess2 & (recv_state . text) .~ []
+            -- Write received text to the buffer.
+            let sess4 = writeBuffer recv_text sess3
+            -- Handle telnet commands.
             let handlers = map (handleTelnet . BS.unpack)
-                               (new_sess ^. recv_state ^. telnet_cmds)
-            liftAction (chainM handlers) new_sess
+                               (sess4 ^. recv_state ^. telnet_cmds)
+            liftAction (chainM handlers) sess4
 handleEvent sess _ = continue sess
 
 leave :: Int -> [a] -> [a]

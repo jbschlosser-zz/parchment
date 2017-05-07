@@ -33,6 +33,7 @@ module Parchment.Session
     , bindings
     , recv_state
     , telnet_cmds
+    , text
     ) where
 
 import Brick.Types (EventM, Next)
@@ -227,9 +228,8 @@ sendRawToServer bytes sess = do
     return sess
 
 receiveServerData :: Sess -> BS.ByteString -> Sess
-receiveServerData sess bs = writeBuffer
-    ((sess & recv_state %~ \rs -> foldl' handleServerByte rs $ BS.unpack bs)
-    ^. recv_state ^. text) sess
+receiveServerData sess bs = sess & recv_state %~
+    \rs -> foldl' handleServerByte rs $ BS.unpack bs
 
 -- === HELPER FUNCTIONS ===
 -- (line, start index, end index), modification func, session
