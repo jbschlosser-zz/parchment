@@ -144,7 +144,8 @@ handleEvent sess (AppEvent e) =
     case e of
         RecvEvent bs -> do
             let new_sess = receiveServerData sess bs
-            let handlers = map (handleTelnet . BS.unpack) (new_sess ^. telnet_cmds)
+            let handlers = map (handleTelnet . BS.unpack)
+                               (new_sess ^. recv_state ^. telnet_cmds)
             liftAction (chainM handlers) new_sess
 handleEvent sess _ = continue sess
 

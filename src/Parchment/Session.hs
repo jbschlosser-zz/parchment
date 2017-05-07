@@ -29,9 +29,10 @@ module Parchment.Session
     , buf_lines
     , cursor
     , scroll_loc
-    , telnet_cmds
     , scm_env
     , bindings
+    , recv_state
+    , telnet_cmds
     ) where
 
 import Brick.Types (EventM, Next)
@@ -63,18 +64,15 @@ import qualified Text.Regex.TDFA.String as R
 data Sess = Sess
     { _buffer :: RB.RingBuffer FString
     , _buf_lines :: Int
-    , _cursor :: Int
-    , _bindings :: Map.Map V.Event (Sess -> EventM () (Next Sess))
-    , _send_queue :: TQueue BS.ByteString
-    , _telnet_state :: ParseState BS.ByteString
-    , _esc_seq_state :: ParseState BS.ByteString
-    , _char_attr :: V.Attr
     , _scroll_loc :: Int
     , _history :: [String]
     , _history_loc :: Int
+    , _cursor :: Int
+    , _bindings :: Map.Map V.Event (Sess -> EventM () (Next Sess))
+    , _recv_state :: RecvState
+    , _send_queue :: TQueue BS.ByteString
     , _scm_env :: Env
-    , _last_search :: Maybe SearchResult -- str, line, start index, end index
-    , _telnet_cmds :: [BS.ByteString]
+    , _last_search :: Maybe SearchResult
     }
 data SearchResult = SearchResult
     { _search :: String
@@ -89,8 +87,24 @@ searchResult search line start end = SearchResult
     , _start = start
     , _end = end
     }
+data RecvState = RecvState
+    { _text :: FString
+    , _telnet_state :: ParseState BS.ByteString
+    , _telnet_cmds :: [BS.ByteString]
+    , _esc_seq_state :: ParseState BS.ByteString
+    , _char_attr :: V.Attr
+    }
+blankRecvState :: RecvState
+blankRecvState = RecvState
+    { _text = []
+    , _telnet_state = NotInProgress
+    , _telnet_cmds = []
+    , _esc_seq_state = NotInProgress
+    , _char_attr = V.defAttr
+    }
 makeLenses ''Sess
 makeLenses ''SearchResult
+makeLenses ''RecvState
 
 -- Initial state of the session data.
 initialSession :: TQueue BS.ByteString ->
@@ -98,18 +112,15 @@ initialSession :: TQueue BS.ByteString ->
 initialSession q bindings scm_env = Sess
     { _buffer = flip RB.push emptyF $ RB.newInit emptyF 50000 -- lines in buffer
     , _buf_lines = 0
-    , _cursor = 0
-    , _bindings = bindings
-    , _send_queue = q
-    , _telnet_state = NotInProgress
-    , _esc_seq_state = NotInProgress
-    , _char_attr = V.defAttr
     , _scroll_loc = 0
     , _history = [""]
     , _history_loc = 0
+    , _cursor = 0
+    , _bindings = bindings
+    , _recv_state = blankRecvState
+    , _send_queue = q
     , _scm_env = scm_env
     , _last_search = Nothing
-    , _telnet_cmds = []
     }
 
 -- === ACTIONS ===
@@ -216,7 +227,9 @@ sendRawToServer bytes sess = do
     return sess
 
 receiveServerData :: Sess -> BS.ByteString -> Sess
-receiveServerData sess bs = foldl' handleServerByte sess $ BS.unpack bs
+receiveServerData sess bs = writeBuffer
+    ((sess & recv_state %~ \rs -> foldl' handleServerByte rs $ BS.unpack bs)
+    ^. recv_state ^. text) sess
 
 -- === HELPER FUNCTIONS ===
 -- (line, start index, end index), modification func, session
@@ -259,37 +272,37 @@ findInFString r fs =
          Right Nothing -> Nothing
          Right (Just ma) -> Just $ ma ! 0
 
-handleServerByte :: Sess -> Word8 -> Sess
-handleServerByte sess b =
+handleServerByte :: RecvState -> Word8 -> RecvState
+handleServerByte recv_state b =
     execState (
         do
-            sess <- get
-            let new_telnet = parseTelnet (_telnet_state sess) b
-            put (sess & telnet_state .~ new_telnet)
+            recv_state <- get
+            let new_telnet = parseTelnet (recv_state ^. telnet_state) b
+            put (recv_state & telnet_state .~ new_telnet)
             case new_telnet of
                 NotInProgress -> do
-                    sess <- get
-                    let new_esc_seq = parseEscSeq (_esc_seq_state sess) b
-                    put (sess & esc_seq_state .~ new_esc_seq)
+                    recv_state <- get
+                    let new_esc_seq = parseEscSeq (recv_state ^. esc_seq_state) b
+                    put (recv_state & esc_seq_state .~ new_esc_seq)
                     case new_esc_seq of
                          NotInProgress -> do
-                             sess <- get
-                             put (addBufferChar sess
-                                 (FChar { _ch = BSC.head . BS.singleton $ b
-                                        , _attr = (_char_attr sess)}))
+                             recv_state <- get
+                             put (recv_state & text %~ ((++)
+                                 [FChar { _ch = BSC.head . BS.singleton $ b
+                                        , _attr = (recv_state ^. char_attr)}]))
                              return ()
                          Success seq -> do
-                             sess <- get
-                             put (sess & char_attr .~ updateCharAttr ((_char_attr sess)) seq)
+                             recv_state <- get
+                             put (recv_state & char_attr .~ updateCharAttr ((_char_attr recv_state)) seq)
                              return ()
                          _ -> return ()
                     return ()
                 Success t -> do
-                    put (sess & telnet_cmds %~ flip (++) [t]
+                    put (recv_state & telnet_cmds %~ flip (++) [t]
                          & telnet_state .~ NotInProgress)
                     return ()
                 _ -> return ()
-        ) sess
+        ) recv_state
 
 addBufferChar :: Sess -> FChar -> Sess
 addBufferChar sess c =
