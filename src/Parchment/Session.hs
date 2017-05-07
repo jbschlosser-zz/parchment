@@ -156,8 +156,10 @@ searchBackwards str sess =
                              Just sr@(line,_,_) -> highlightStr sr . setSearchRes str (Just sr) .
                                  unhighlightPrevious . scrollLines
                                      (line - (sess ^. scroll_loc)) $ sess
-                             Nothing -> writeBufferLn (colorize V.red $ "Not found!") .
-                                 setSearchRes str Nothing . unhighlightPrevious $ sess
+                             Nothing -> writeBufferLn
+                                (colorize V.red $ "Search string not found!") .
+                                 setSearchRes str Nothing . unhighlightPrevious $
+                                    sess & scroll_loc .~ 0
     where startLine sess =
               case sess ^. last_search of
                    Nothing -> 0
