@@ -287,7 +287,7 @@ handleServerByte recv_state b =
                     case new_esc_seq of
                          NotInProgress -> do
                              recv_state <- get
-                             put (recv_state & text %~ ((++)
+                             put (recv_state & text %~ (flip (++)
                                  [FChar { _ch = BSC.head . BS.singleton $ b
                                         , _attr = (recv_state ^. char_attr)}]))
                              return ()
