@@ -96,7 +96,7 @@ makeLenses ''SearchResult
 initialSession :: TQueue BS.ByteString ->
     Map.Map V.Event (Sess -> EventM () (Next Sess)) -> Env -> Sess
 initialSession q bindings scm_env = Sess
-    { _buffer = RB.newInit emptyF 50000 -- lines in buffer
+    { _buffer = flip RB.push emptyF $ RB.newInit emptyF 50000 -- lines in buffer
     , _buf_lines = 0
     , _cursor = 0
     , _bindings = bindings
@@ -135,7 +135,7 @@ clearInputLine sess = sess &
     cursor .~ 0
 
 writeBuffer :: FString -> Sess -> Sess
-writeBuffer str sess = sess & buffer .~ foldl' addBufferChar (sess ^. buffer) str
+writeBuffer str sess = foldl' addBufferChar sess str
 
 writeBufferLn :: FString -> Sess -> Sess
 writeBufferLn str = writeBuffer (str ++ [FChar { _ch = '\n', _attr = V.defAttr}])
@@ -155,7 +155,7 @@ searchBackwards str sess =
          Right regex -> case searchBackwardsHelper regex (sess ^. buffer) (startLine sess) of
                              Just sr@(line,_,_) -> highlightStr sr . setSearchRes str (Just sr) .
                                  unhighlightPrevious . scrollLines
-                                     ((startLine sess) - line) $ sess
+                                     (line - (sess ^. scroll_loc)) $ sess
                              Nothing -> writeBufferLn (colorize V.red $ "Not found!") .
                                  setSearchRes str Nothing . unhighlightPrevious $ sess
     where startLine sess =
@@ -272,7 +272,7 @@ handleServerByte sess b =
                     case new_esc_seq of
                          NotInProgress -> do
                              sess <- get
-                             put (sess & buffer %~ flip addBufferChar
+                             put (addBufferChar sess
                                  (FChar { _ch = BSC.head . BS.singleton $ b
                                         , _attr = (_char_attr sess)}))
                              return ()
@@ -289,18 +289,23 @@ handleServerByte sess b =
                 _ -> return ()
         ) sess
 
-addBufferChar :: RB.RingBuffer FString -> FChar -> RB.RingBuffer FString
-addBufferChar buf c =
+addBufferChar :: Sess -> FChar -> Sess
+addBufferChar sess c =
     if (_ch c) == '\n' then
-        RB.push buf emptyF
+        sess & buffer %~ (\buf -> RB.push buf emptyF)
+             & last_search %~ \ls ->
+                case ls of
+                    Just res ->
+                        if (res ^. line) + 1 >= RB.length (sess ^. buffer) then
+                            Nothing
+                        else
+                            Just $ res & line %~ (+1)
+                    Nothing -> Nothing
     else if (_ch c) == '\r' then
-        buf
-    else if RB.length buf == 0 then
-        -- Init with char.
-        RB.push buf [c]
+        sess
     else
         -- Add char to end of last line.
-        RB.update buf 0 ((buf RB.! 0) ++ [c])
+        sess & buffer %~ \buf -> RB.update buf 0 ((buf RB.! 0) ++ [c])
 
 clampExclusive :: Int -> Int -> Int -> Int
 clampExclusive min max = clamp min (max - 1)
