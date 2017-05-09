@@ -3,10 +3,14 @@ module Parchment.Util
     , runIOMaybe
     , returnMaybe
     , chainM
+    , leave
+    , regexCompOpt
+    , regexExecOpt
     ) where
 
 import Control.Monad (liftM, ap)
 import Control.Monad.IO.Class
+import Text.Regex.TDFA (CompOption(..), ExecOption(..))
 
 newtype IOMaybe a = IOM { runIOMaybe :: IO (Maybe a) }
 
@@ -41,3 +45,18 @@ chainM [] a = return a
 chainM (x:xs) a = do
     res <- x a
     chainM xs res
+
+leave :: Int -> [a] -> [a]
+leave n lst = take (length lst - n) lst
+
+regexCompOpt :: CompOption
+regexCompOpt = CompOption
+    { caseSensitive = True
+    , multiline = False
+    , rightAssoc = True
+    , newSyntax = True
+    , lastStarGreedy = False
+    }
+
+regexExecOpt :: ExecOption
+regexExecOpt = ExecOption {captureGroups = True}

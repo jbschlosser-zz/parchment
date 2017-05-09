@@ -28,6 +28,11 @@
 (define (define-alias alias command)
   (set! *aliases* (hash-set *aliases* alias command)))
 
+; ----- Triggers -----
+(define *triggers* (make-hash))
+(define (define-trigger pattern action)
+  (set! *triggers* (hash-set *triggers* pattern action)))
+
 ; ----- Convenience functions -----
 ; Send input, optionally add to history, and print to scrollback buffer.
 (define (full-send hist s)
@@ -90,7 +95,9 @@
       (bind "M-G" (scroll-lines -9999999))
       (bind "M-g" (scroll-lines 9999999))
       (bind "S-Up" (scroll-lines 1))
-      (bind "S-Down" (scroll-lines -1)))))
+      (bind "S-Down" (scroll-lines -1))
+      (bind "M-r" (composite (list reload-config
+                                   (println "{bConfig reloaded.")))))))
 
 ; Returns the action to perform for the given input. If hist is true,
 ; add the input to the history.
@@ -130,10 +137,26 @@
 (define (gmcp-hook cmd)
   (println (string-append "GMCP: " cmd)))
 
-; Hook to run when data is received from the server. Returns an action
-; to perform.
-;(define (recv-hook data)
-;  (println data))
+; Hook to run when data is received.
+(define (recv-hook data)
+  (let ((lines (string-split data #\newline))
+        (patterns (hash-keys *triggers*)))
+    (composite
+     (map (lambda (line)
+            (composite
+             (map (lambda (pattern)
+                    (let ((action (hash-get *triggers* pattern))
+                          (matches (string-matches line pattern)))
+                      (if matches
+                          (action matches)
+                          do-nothing)))
+                  patterns)))
+          lines))))
 
 ; ===== MUD-SPECIFIC =====
 (define-alias "test" "4n4e;world")
+(define-trigger "Welcome" (lambda (m)
+                            (composite
+                             (list
+                              (println (string-append "{m===Triggered on " (car m) "==="))
+                              (send-helper #f "help")))))

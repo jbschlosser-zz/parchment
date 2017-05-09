@@ -24,6 +24,9 @@ module Parchment.Session
     , highlightStr
     , unhighlightStr
     , searchBackwards
+    -- TODO: Maybe don't expose these?
+    , regexCompOpt
+    , regexExecOpt
     -- lenses
     , buffer
     , buf_lines
@@ -58,8 +61,8 @@ import Parchment.FString
 import Parchment.ParseState
 import qualified Parchment.RingBuffer as RB
 import Parchment.Telnet
+import Parchment.Util
 import Text.Parsec hiding (Error, getInput)
-import Text.Regex.TDFA (CompOption(..), ExecOption(..))
 import qualified Text.Regex.TDFA.String as R
 
 data Sess = Sess
@@ -241,18 +244,6 @@ modifyBuffer (line, start, end) func sess =
               where (a, (item:b)) = splitAt n ls
           new_str = (foldr (flip (.)) id $ flip map [start..end] $
                     replaceAtIndex func) line_str
-
-regexCompOpt :: CompOption
-regexCompOpt = CompOption
-    { caseSensitive = True
-    , multiline = False
-    , rightAssoc = True
-    , newSyntax = True
-    , lastStarGreedy = False
-    }
-
-regexExecOpt :: ExecOption
-regexExecOpt = ExecOption {captureGroups = True}
 
 -- Input: Search string, buffer, starting line.
 -- Returns: Line, start index, end index if found; Nothing otherwise.

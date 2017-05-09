@@ -14,6 +14,7 @@ module ScriptInterface
 import Brick.Main (halt, continue)
 import Brick.Types (EventM, Next)
 import Control.Monad.IO.Class (liftIO)
+import Data.Array (elems)
 import Data.Maybe
 import Data.List (isInfixOf)
 import Data.List.Split (splitOn)
@@ -27,6 +28,7 @@ import Parchment.FString
 import Parchment.Session
 import Parchment.Util
 import System.Environment.XDG.BaseDir
+import qualified Text.Regex.TDFA.String as R
 
 scriptInterface :: IO Env
 scriptInterface = r5rsEnv >>= flip extendEnv
@@ -53,7 +55,9 @@ scriptInterface = r5rsEnv >>= flip extendEnv
     , ((varNamespace, "make-hash"), CustFunc makeHash)
     , ((varNamespace, "hash-contains?"), CustFunc hashContains)
     , ((varNamespace, "hash-get"), CustFunc hashGet)
-    , ((varNamespace, "hash-set"), CustFunc hashSet)]
+    , ((varNamespace, "hash-set"), CustFunc hashSet)
+    , ((varNamespace, "hash-keys"), CustFunc hashKeys)
+    , ((varNamespace, "string-matches"), CustFunc stringMatches)]
 
 -- Characters displayed directly.
 rawKeys :: String
@@ -241,3 +245,20 @@ hashSet :: [LispVal] -> IOThrowsError LispVal
 hashSet [(HashTable ht), key, val] = liftThrows . Right . HashTable $
     M.insert key val ht
 hashSet _ = liftThrows . Left . Default $ "Usage: (hash-set ht key val)"
+
+hashKeys :: [LispVal] -> IOThrowsError LispVal
+hashKeys [(HashTable ht)] = liftThrows . Right . List $ M.keys ht
+hashKeys _ = liftThrows . Left . Default $ "Usage: (hash-keys ht)"
+
+stringMatches :: [LispVal] -> IOThrowsError LispVal
+stringMatches [(String s), (String pattern)] =
+    case R.compile regexCompOpt regexExecOpt pattern of
+        Left err -> liftThrows . Left . Default $ "Error: " ++ show err
+        Right regex -> case R.execute regex s of
+                            Left _ -> liftThrows . Right . Bool $ False
+                            Right Nothing -> liftThrows . Right . Bool $ False
+                            Right (Just ma) -> liftThrows . Right . List $ matches
+                                where extractSub ind = String . take (snd ind)
+                                                              . drop (fst ind) $ s
+                                      matches = map extractSub $ elems ma
+stringMatches _ = liftThrows . Left . Default $ "Usage: (string-matches str pattern)"

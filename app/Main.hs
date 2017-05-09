@@ -145,20 +145,36 @@ handleEvent sess (AppEvent e) =
         RecvEvent bs -> do
             -- Receive and process the server data.
             let sess2 = receiveServerData sess bs
-            -- Extract received text.
+            -- Extract received text and telnet commands.
             let recv_text = sess2 ^. recv_state ^. text
-            -- Reset received text for next time.
+            let telnets = sess2 ^. recv_state ^. telnet_cmds
+            -- Reset received text and telnet commands for next time.
             let sess3 = sess2 & (recv_state . text) .~ []
+                              & (recv_state . telnet_cmds) .~ []
             -- Write received text to the buffer.
             let sess4 = writeBuffer recv_text sess3
-            -- Handle telnet commands.
-            let handlers = map (handleTelnet . BS.unpack)
-                               (sess4 ^. recv_state ^. telnet_cmds)
-            liftAction (chainM handlers) sess4
+            -- Call the recv hook.
+            let to_eval = List [Atom "recv-hook", String $
+                                 filter (not . (==) '\r') $ removeFormatting recv_text]
+            res <- liftIO $ evalLisp' (sess4 ^. scm_env) to_eval
+            let action = case res of
+                    Right l -> do
+                        case l of
+                            Opaque _ -> opaqueToAction l
+                            x -> return . (writeBufferLn $
+                                colorize V.red $ "Expected an action, found: " ++ (show x))
+                    Left err -> return . (writeBufferLn (colorize V.red $ show err))
+            res2 <- liftIO . runIOMaybe $ action sess4
+            case res2 of
+                Nothing -> halt sess4
+                Just sess5 -> do
+                    -- Handle telnet commands.
+                    let handlers = map (handleTelnet . BS.unpack) telnets
+                    sess6 <- liftIO . runIOMaybe $ (chainM handlers) sess5
+                    case sess6 of
+                        Nothing -> halt sess5
+                        Just sess7 -> continue sess7
 handleEvent sess _ = continue sess
-
-leave :: Int -> [a] -> [a]
-leave n lst = take (length lst - n) lst
 
 handleTelnet :: [Word8] -> Sess -> IOMaybe Sess
 handleTelnet cmd
