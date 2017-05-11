@@ -15,7 +15,7 @@ module Parchment.FString
 import qualified Graphics.Vty as V
 import Text.Parsec hiding (Error, getInput)
 
-data FChar = FChar {_ch :: Char, _attr :: V.Attr}
+data FChar = FChar {_ch :: Char, _attr :: V.Attr} deriving(Eq)
 instance Show FChar where
     show FChar {_ch = ch, _attr = _} = [ch]
 

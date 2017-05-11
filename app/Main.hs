@@ -146,7 +146,7 @@ handleEvent sess (AppEvent e) =
             -- Receive and process the server data.
             let sess2 = receiveServerData sess bs
             -- Extract received text and telnet commands.
-            let recv_text = sess2 ^. recv_state ^. text
+            let recv_text = reverse $ sess2 ^. recv_state ^. text
             let telnets = sess2 ^. recv_state ^. telnet_cmds
             -- Reset received text and telnet commands for next time.
             let sess3 = sess2 & (recv_state . text) .~ []

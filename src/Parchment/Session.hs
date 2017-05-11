@@ -24,9 +24,6 @@ module Parchment.Session
     , highlightStr
     , unhighlightStr
     , searchBackwards
-    -- TODO: Maybe don't expose these?
-    , regexCompOpt
-    , regexExecOpt
     -- lenses
     , buffer
     , buf_lines
@@ -42,7 +39,6 @@ module Parchment.Session
 import Brick.Types (EventM, Next)
 import Brick.Util (clamp)
 import Control.Concurrent.STM.TQueue
-import Control.Monad.State (get, put, execState)
 import Control.Monad.STM (atomically)
 import Data.Array ((!))
 import qualified Data.ByteString as BS
@@ -231,8 +227,8 @@ sendRawToServer bytes sess = do
     return sess
 
 receiveServerData :: Sess -> BS.ByteString -> Sess
-receiveServerData sess bs = sess & recv_state %~
-    \rs -> foldl' handleServerByte rs $ BS.unpack bs
+receiveServerData sess bs =
+    sess & recv_state %~ \rs -> foldl handleServerByte rs $ BS.unpack bs
 
 -- === HELPER FUNCTIONS ===
 -- (line, start index, end index), modification func, session
@@ -264,54 +260,35 @@ findInFString r fs =
          Right (Just ma) -> Just $ ma ! 0
 
 handleServerByte :: RecvState -> Word8 -> RecvState
-handleServerByte recv_state b =
-    execState (
-        do
-            recv_state <- get
-            let new_telnet = parseTelnet (recv_state ^. telnet_state) b
-            put (recv_state & telnet_state .~ new_telnet)
-            case new_telnet of
-                NotInProgress -> do
-                    recv_state <- get
-                    let new_esc_seq = parseEscSeq (recv_state ^. esc_seq_state) b
-                    put (recv_state & esc_seq_state .~ new_esc_seq)
-                    case new_esc_seq of
-                         NotInProgress -> do
-                             recv_state <- get
-                             put (recv_state & text %~ (flip (++)
-                                 [FChar { _ch = BSC.head . BS.singleton $ b
-                                        , _attr = (recv_state ^. char_attr)}]))
-                             return ()
-                         Success seq -> do
-                             recv_state <- get
-                             put (recv_state & char_attr .~ updateCharAttr ((_char_attr recv_state)) seq)
-                             return ()
-                         _ -> return ()
-                    return ()
-                Success t -> do
-                    put (recv_state & telnet_cmds %~ flip (++) [t]
-                         & telnet_state .~ NotInProgress)
-                    return ()
-                _ -> return ()
-        ) recv_state
+handleServerByte recv_state b 
+    | t@(InProgress _) <- new_telnet = recv_state & telnet_state .~ t
+    | t@(Success cmd) <- new_telnet = recv_state & telnet_state .~ t
+                                                 & telnet_cmds %~ flip (++) [cmd]
+    | e@(InProgress _) <- new_esc_seq = recv_state & esc_seq_state .~ e
+    | e@(Success seq) <- new_esc_seq = recv_state & esc_seq_state .~ e
+                                                  & char_attr %~ \ca ->
+                                                                   updateCharAttr ca seq
+    | otherwise = recv_state & text %~ ((:)
+        FChar { _ch = BSC.head . BS.singleton $ b , _attr = (recv_state ^. char_attr)})
+    where new_telnet = parseTelnet (recv_state ^. telnet_state) b
+          new_esc_seq = parseEscSeq (recv_state ^. esc_seq_state) b
 
 addBufferChar :: Sess -> FChar -> Sess
-addBufferChar sess c =
-    if (_ch c) == '\n' then
-        sess & buffer %~ (\buf -> RB.push buf emptyF)
-             & last_search %~ \ls ->
-                case ls of
-                    Just res ->
-                        if (res ^. line) + 1 >= RB.length (sess ^. buffer) then
-                            Nothing
-                        else
-                            Just $ res & line %~ (+1)
-                    Nothing -> Nothing
-    else if (_ch c) == '\r' then
-        sess
-    else
-        -- Add char to end of last line.
-        sess & buffer %~ \buf -> RB.update buf 0 ((buf RB.! 0) ++ [c])
+addBufferChar sess c
+    -- Newlines move to next line.
+    | (_ch c) == '\n' = sess & buffer %~ (\buf -> RB.push buf emptyF)
+                             & last_search %~ updateSearchResult
+    -- Throw out carriage returns.
+    | (_ch c) == '\r' = sess
+    -- Add char to end of last line.
+    | otherwise = sess & buffer %~ \buf -> RB.update buf 0 ((buf RB.! 0) ++ [c])
+    where updateSearchResult :: Maybe SearchResult -> Maybe SearchResult
+          updateSearchResult Nothing = Nothing
+          updateSearchResult (Just res)
+              -- Search result will get pushed out of the buffer; flush it.
+              | (res ^. line) + 1 >= RB.length (sess ^. buffer) = Nothing
+              -- Account for new line in the search result.
+              | otherwise = Just $ res & line %~ (+1)
 
 clampExclusive :: Int -> Int -> Int -> Int
 clampExclusive min max = clamp min (max - 1)
