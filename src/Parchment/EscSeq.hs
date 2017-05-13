@@ -13,22 +13,15 @@ escSeq_END = 0x6D
 escSeq_MAX_SIZE = 15
 
 parseEscSeq :: ParseState BS.ByteString -> Word8 -> ParseState BS.ByteString
-parseEscSeq st b =
-    case st of
-         NotInProgress ->
-             if b == escSeq_BEGIN then
-                InProgress $ BS.singleton b
-             else
-                NotInProgress
-         InProgress bs ->
-             let new_bs = BS.snoc bs b in
-             if BS.length new_bs > escSeq_MAX_SIZE then
-                Error new_bs
-             else if b == escSeq_END then
-                Success new_bs
-             else
-                InProgress new_bs
-         _ -> parseEscSeq NotInProgress b 
+parseEscSeq NotInProgress b
+    | b == escSeq_BEGIN = InProgress $ BS.singleton b
+    | otherwise = NotInProgress
+parseEscSeq (InProgress bs) b
+    | BS.length new_bs > escSeq_MAX_SIZE = Error new_bs
+    | b == escSeq_END = Success . BS.reverse $ new_bs
+    | otherwise = InProgress new_bs
+    where new_bs = BS.cons b bs
+parseEscSeq _ b = parseEscSeq NotInProgress b
 
 -- Returns the internal parts of the esc sequence.
 escSeqPartParser :: Parsec String () [String]

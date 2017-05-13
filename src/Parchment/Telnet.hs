@@ -65,36 +65,26 @@ tMSSP = 70 :: Word8
 tMSDP = 69 :: Word8
 
 twoByteCommands :: [Word8]
-twoByteCommands = [tIAC, tNOP, tDATA_MARK, tBREAK, tIP,
-                   tAO, tAYT, tEC, tEL, tGA]
+twoByteCommands = [tIAC, tNOP, tDATA_MARK, tBREAK, tIP, tAO, tAYT, tEC, tEL, tGA]
 
 threeByteCommands :: [Word8]
 threeByteCommands = [tWILL, tWONT, tDO, tDONT]
 
 parseTelnet :: ParseState BS.ByteString -> Word8 -> ParseState BS.ByteString
-parseTelnet st b =
-    case st of
-         NotInProgress ->
-             if b == tIAC then
-                InProgress $ BS.singleton b
-             else
-                NotInProgress
-         InProgress bs ->
-             case BS.length bs of
-                  1 -> case b of _
-                                  | elem b twoByteCommands -> Success new_bs
-                                  | elem b threeByteCommands -> InProgress new_bs
-                                  | b == tSB -> InProgress new_bs
-                                  | otherwise -> Error new_bs
-                  2 -> case prev of _
-                                     | elem prev threeByteCommands -> Success new_bs
-                                     | prev == tSB -> InProgress new_bs
-                                     | otherwise -> Error new_bs
-                  _ -> case (prev, b) of _
-                                          | prev == tIAC &&
-                                                b == tSE -> Success new_bs
-                                          | otherwise -> InProgress new_bs
-                where
-                    new_bs = BS.snoc bs b
-                    prev = BS.last bs
-         _ -> parseTelnet NotInProgress b 
+parseTelnet NotInProgress b
+    | b == tIAC = InProgress $ BS.singleton b
+    | otherwise = NotInProgress
+parseTelnet (InProgress bs) b
+    | len == 1 && b `elem` twoByteCommands = Success . BS.reverse $ new_bs
+    | len == 1 && b `elem` threeByteCommands = InProgress new_bs
+    | len == 1 && b == tSB = InProgress new_bs
+    | len == 1 = Error new_bs
+    | len == 2 && prev `elem` threeByteCommands = Success . BS.reverse $ new_bs
+    | len == 2 && prev == tSB = InProgress new_bs
+    | len == 2 = Error new_bs
+    | prev == tIAC && b == tSE = Success . BS.reverse $ new_bs
+    | otherwise = InProgress new_bs
+    where len = BS.length bs
+          new_bs = BS.cons b bs
+          prev = BS.head bs
+parseTelnet _ b = parseTelnet NotInProgress b
