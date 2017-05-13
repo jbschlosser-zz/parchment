@@ -107,12 +107,13 @@ onAppStart sess = do
 -- Key bindings.
 keyBindings = fromList $ map rawKeyBinding rawKeys ++
     [ ((V.EvKey V.KEsc []), halt)
-    , ((V.EvKey V.KBS []), continue . delKey)
+    , ((V.EvKey V.KBS []), continue . backspaceInput)
+    , ((V.EvKey V.KDel []), continue . deleteInput)
     , ((V.EvKey V.KEnter []), \sess -> do
         let input = getInput sess
         let to_eval = List [Atom "send-hook", String input]
-        res <- liftIO $ evalLisp' (_scm_env sess) to_eval
-        let sesh = clearInputLine . historyNewest $ sess
+        res <- liftIO $ evalLisp' (sess ^. scm_env) to_eval
+        let sesh = clearInput . historyNewest $ sess
         case res of
              Right l -> do
                  case l of
@@ -124,10 +125,12 @@ keyBindings = fromList $ map rawKeyBinding rawKeys ++
     , ((V.EvKey V.KPageDown []), continue . pageDown)
     , ((V.EvKey V.KUp []), continue . historyOlder)
     , ((V.EvKey V.KDown []), continue . historyNewer)
-    , ((V.EvKey (V.KChar 'u') [V.MCtrl]), continue . clearInputLine)
+    , ((V.EvKey V.KLeft []), continue . moveCursor (-1))
+    , ((V.EvKey V.KRight []), continue . moveCursor 1)
+    , ((V.EvKey (V.KChar 'u') [V.MCtrl]), continue . clearInput)
     ]
     where
-        rawKeyBinding c = ((V.EvKey (V.KChar c) []), \st -> continue $ addKey c st)
+        rawKeyBinding c = ((V.EvKey (V.KChar c) []), \st -> continue $ addInput c st)
 
 -- Handle UI and other app events.
 handleEvent :: Sess -> BrickEvent () AppEvent -> EventM () (Next Sess)

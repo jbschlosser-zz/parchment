@@ -5,11 +5,13 @@ module Parchment.Session
     , Settings(..)
     , initialSession
     , defaultSettings
-    , addKey
-    , delKey
+    , addInput
+    , backspaceInput
+    , deleteInput
     , sendToServer
     , sendRawToServer
-    , clearInputLine
+    , clearInput
+    , moveCursor
     , writeBuffer
     , writeBufferLn
     , bind
@@ -48,7 +50,7 @@ import Control.Monad.STM (atomically)
 import Data.Array ((!))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
-import Data.List (foldl')
+import Data.List (foldl', splitAt)
 import qualified Data.Map.Lazy as Map
 import Data.Maybe (isJust, fromJust)
 import qualified Data.Sequence as S
@@ -144,26 +146,40 @@ initialSession settings q bindings scm_env = Sess
     }
 
 -- === ACTIONS ===
-addKey :: Char -> Sess -> Sess
-addKey k sess = sess & history . ix (sess ^. history_loc) %~ (++ [k]) & cursor %~ (+1)
+getInput :: Sess -> String
+getInput sess = sess ^. (history . ix (sess ^. history_loc))
 
-delKey :: Sess -> Sess
-delKey sess =
-    if length (getInput sess) == 0 then
-        sess
-    else
-        sess & history . ix (sess ^. history_loc) %~ init & cursor %~ subtract 1
+addInput :: Char -> Sess -> Sess
+addInput ch sess = sess & history . ix (sess ^. history_loc) .~ left ++ ch:right
+                        & moveCursor 1
+    where input = getInput sess
+          (left, right) = splitAt (sess ^. cursor) input
+
+backspaceInput :: Sess -> Sess
+backspaceInput sess
+    | left == "" = sess
+    | otherwise = sess & history . ix (sess ^. history_loc) .~ init left ++ right
+                       & moveCursor (-1)
+    where input = getInput sess
+          (left, right) = splitAt (sess ^. cursor) input
+
+deleteInput :: Sess -> Sess
+deleteInput sess
+    | right == "" = sess
+    | otherwise = sess & history . ix (sess ^. history_loc) .~ left ++ tail right
+    where input = getInput sess
+          (left, right) = splitAt (sess ^. cursor) input
+
+clearInput :: Sess -> Sess
+clearInput sess =
+    sess & history . ix (sess ^. history_loc) .~ ""
+         & cursor .~ 0
+
+moveCursor :: Int -> Sess -> Sess
+moveCursor n sess = sess & cursor %~ clamp 0 (length $ getInput sess) . (+) n
 
 bind :: V.Event -> (Sess -> EventM () (Next Sess)) -> Sess -> Sess
-bind event action sess = sess & bindings %~ (\b -> Map.insert event action b)
-
-getInput :: Sess -> String
-getInput sess = flip (^.) (history . ix (sess ^. history_loc)) $ sess
-
-clearInputLine :: Sess -> Sess
-clearInputLine sess = sess &
-    history . ix (sess ^. history_loc) .~ "" &
-    cursor .~ 0
+bind event action sess = sess & bindings %~ Map.insert event action
 
 writeBuffer :: FString -> Sess -> Sess
 writeBuffer str sess = foldl' addBufferChar sess str
@@ -280,7 +296,7 @@ findInFString r fs =
          Right (Just ma) -> Just $ ma ! 0
 
 handleServerByte :: RecvState -> Word8 -> RecvState
-handleServerByte recv_state b 
+handleServerByte recv_state b
     | t@(InProgress _) <- new_telnet = recv_state & telnet_state .~ t
     | t@(Success cmd) <- new_telnet = recv_state & telnet_state .~ t
                                                  & telnet_cmds %~ flip (++) [cmd]

@@ -32,9 +32,10 @@ import qualified Text.Regex.TDFA.String as R
 
 scriptInterface :: IO Env
 scriptInterface = r5rsEnv >>= flip extendEnv
-    [ ((varNamespace, "del-key"), sessFuncToOpaque delKey)
+    [ ((varNamespace, "backspace-input"), sessFuncToOpaque backspaceInput)
+    , ((varNamespace, "delete-input"), sessFuncToOpaque deleteInput)
     , ((varNamespace, "quit"), actionToOpaque $ returnMaybe . const Nothing)
-    , ((varNamespace, "clear-input-line"), sessFuncToOpaque clearInputLine)
+    , ((varNamespace, "clear-input"), sessFuncToOpaque clearInput)
     , ((varNamespace, "page-up"), sessFuncToOpaque pageUp)
     , ((varNamespace, "page-down"), sessFuncToOpaque pageDown)
     , ((varNamespace, "history-older"), sessFuncToOpaque historyOlder)
@@ -49,7 +50,8 @@ scriptInterface = r5rsEnv >>= flip extendEnv
     , ((varNamespace, "search-backwards"), CustFunc searchBackwardsWrapper)
     , ((varNamespace, "print"), CustFunc writeBufferWrapper)
     , ((varNamespace, "println"), CustFunc writeBufferLnWrapper)
-    , ((varNamespace, "add-key"), CustFunc addKeyWrapper)
+    , ((varNamespace, "add-input"), CustFunc addInputWrapper)
+    , ((varNamespace, "move-cursor"), CustFunc moveCursorWrapper)
     , ((varNamespace, "composite"), CustFunc compositeAction)
     , ((varNamespace, "string-repr"), CustFunc stringRepr)
     , ((varNamespace, "make-hash"), CustFunc makeHash)
@@ -172,9 +174,14 @@ partToModifier s = case s of
                         _ -> Nothing
 
 -- === BINDING WRAPPERS. ===
-addKeyWrapper :: [LispVal] -> IOThrowsError LispVal
-addKeyWrapper [(Char c)] = liftThrows . Right . sessFuncToOpaque $ addKey c
-addKeyWrapper _ = liftThrows . Left . Default $ "Usage: (add-key <char>)"
+addInputWrapper :: [LispVal] -> IOThrowsError LispVal
+addInputWrapper [(Char c)] = liftThrows . Right . sessFuncToOpaque $ addInput c
+addInputWrapper _ = liftThrows . Left . Default $ "Usage: (add-input <char>)"
+
+moveCursorWrapper :: [LispVal] -> IOThrowsError LispVal
+moveCursorWrapper [(Number n)] = liftThrows . Right . sessFuncToOpaque . moveCursor $
+    fromIntegral n
+moveCursorWrapper _ = liftThrows . Left . Default $ "Usage: (move-cursor <num>)"
 
 scrollHistoryWrapper :: [LispVal] -> IOThrowsError LispVal
 scrollHistoryWrapper [(Number n)] = liftThrows . Right . sessFuncToOpaque . scrollHistory $
