@@ -29,7 +29,7 @@ import Data.Text.Markup ((@@))
 import Data.Word (Word8)
 import qualified Graphics.Vty as V
 import Language.Scheme.Core
-import Language.Scheme.Types
+import qualified Language.Scheme.Types as SCM
 import Lens.Micro ((^.), (&), (.~))
 import Network (withSocketsDo)
 import Parchment.FString
@@ -104,6 +104,20 @@ onAppStart sess = do
     let lines = (T.height $ fromJust size) - nonBufferLines
     return $ sess & buf_lines .~ lines
 
+-- Evals the given Scheme hook and runs the returned action.
+evalHook :: String -> [SCM.LispVal] -> Sess -> IOMaybe Sess
+evalHook name args sess = do
+    let to_eval = SCM.List $ (SCM.Atom name) : args
+    res <- liftIO $ evalLisp' (sess ^. scm_env) to_eval
+    case res of
+            Right l -> do
+                case l of
+                    SCM.Opaque _ -> (opaqueToAction l) sess
+                    x -> returnMaybe . Just $ sess & writeBufferLn
+                        (colorize V.red $ "Expected an action, found: " ++ show x)
+            Left err -> returnMaybe . Just $ sess & writeBufferLn
+                (colorize V.red $ show err)
+
 -- Key bindings.
 keyBindings = fromList $ map rawKeyBinding rawKeys ++
     [ ((V.EvKey V.KEsc []), halt)
@@ -111,16 +125,8 @@ keyBindings = fromList $ map rawKeyBinding rawKeys ++
     , ((V.EvKey V.KDel []), continue . deleteInput)
     , ((V.EvKey V.KEnter []), \sess -> do
         let input = getInput sess
-        let to_eval = List [Atom "send-hook", String input]
-        res <- liftIO $ evalLisp' (sess ^. scm_env) to_eval
-        let sesh = clearInput . historyNewest $ sess
-        case res of
-             Right l -> do
-                 case l of
-                      Opaque _ -> liftAction (opaqueToAction l) sesh
-                      x -> continue $ flip writeBufferLn sesh $
-                           colorize V.red $ "Expected an action, found: " ++ (show x)
-             Left err -> continue $ flip writeBufferLn sesh $ colorize V.red $ show err)
+        let new_sess = sess & clearInput & historyNewest
+        liftAction (evalHook "send-hook" [SCM.String input]) new_sess)
     , ((V.EvKey V.KPageUp []), continue . pageUp)
     , ((V.EvKey V.KPageDown []), continue . pageDown)
     , ((V.EvKey V.KUp []), continue . historyOlder)
@@ -135,7 +141,7 @@ keyBindings = fromList $ map rawKeyBinding rawKeys ++
 -- Handle UI and other app events.
 handleEvent :: Sess -> BrickEvent () AppEvent -> EventM () (Next Sess)
 handleEvent sess (VtyEvent e) =
-    case Map.lookup e (_bindings sess) of
+    case Map.lookup e (sess ^. bindings) of
         Just b -> b sess
         Nothing -> case e of
                         -- Update the number of buffer lines after the resize.
@@ -158,18 +164,9 @@ handleEvent sess (AppEvent e) =
             -- Write received text to the buffer.
             let sess4 = writeBuffer recv_text sess3
             -- Call the recv hook.
-            let to_eval = List [Atom "recv-hook", String $
-                                 filter (not . (==) '\r') $ removeFormatting recv_text]
-            res <- liftIO $ evalLisp' (sess4 ^. scm_env) to_eval
-            let action = case res of
-                    Right l -> do
-                        case l of
-                            Opaque _ -> opaqueToAction l
-                            x -> return . (writeBufferLn $
-                                colorize V.red $ "Expected an action, found: " ++ (show x))
-                    Left err -> return . (writeBufferLn (colorize V.red $ show err))
-            res2 <- liftIO . runIOMaybe $ action sess4
-            case res2 of
+            let clean = filter (not . (==) '\r') $ removeFormatting recv_text
+            res <- liftIO . runIOMaybe $ evalHook "recv-hook" [SCM.String clean] sess4
+            case res of
                 Nothing -> halt sess4
                 Just sess5 -> do
                     -- Handle telnet commands.
@@ -198,18 +195,7 @@ handleTelnet cmd
     | cmd == [tIAC, tWILL, tMSSP] = liftIO . sendRawToServer [tIAC, tDONT, tMSSP]
     | cmd == [tIAC, tWILL, tMSDP] = liftIO . sendRawToServer [tIAC, tDONT, tMSDP]
     | otherwise = return . writeBufferLn (colorize V.red $ show cmd)
-
-handleGmcp :: String -> Sess -> IOMaybe Sess
-handleGmcp cmd sess = do
-    let to_eval = List [Atom "gmcp-hook", String cmd]
-    res <- liftIO $ evalLisp' (sess ^. scm_env) to_eval
-    case res of
-        Right l -> do
-            case l of
-                Opaque _ -> opaqueToAction l sess
-                x -> return . flip writeBufferLn sess $
-                    colorize V.red $ "Expected an action, found: " ++ (show x)
-        Left err -> return . flip writeBufferLn sess $ colorize V.red $ show err
+    where handleGmcp cmd = evalHook "gmcp-hook" [SCM.String cmd]
 
 -- Draw the UI.
 drawUI :: Sess -> [Widget()]
