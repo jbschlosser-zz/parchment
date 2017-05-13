@@ -6,9 +6,8 @@ import Brick.AttrMap (attrMap)
 import Brick.Main (App(..), customMain, showFirstCursor, halt, continue)
 import Brick.Markup (markup)
 import Brick.Types (Widget(..), Padding(..), Location(..), Next, EventM, BrickEvent(..),
-                    getContext, Size(..), availHeightL)
-import Brick.Widgets.Core ((<=>), padBottom, str, vBox, showCursor)
-import Brick.Widgets.Border (hBorder)
+                    getContext, Size(..), availHeightL, availWidthL)
+import Brick.Widgets.Core ((<=>), padBottom, str, hBox, vBox, showCursor)
 import Conduit
 import Control.Concurrent (forkIO, newChan, writeChan)
 import Control.Concurrent.Async (Concurrently(..), runConcurrently)
@@ -25,8 +24,8 @@ import Data.Map (fromList)
 import qualified Data.Map.Lazy as Map
 import Data.Maybe (fromJust)
 import qualified Data.Sequence as S
-import Data.Text (singleton)
-import Data.Text.Markup ((@@), Markup)
+import qualified Data.Text as TXT
+import Data.Text.Markup ((@@))
 import Data.Word (Word8)
 import qualified Graphics.Vty as V
 import Language.Scheme.Core
@@ -68,7 +67,9 @@ main = withSocketsDo . withCorrectArgsDo $ \args -> do
     send_queue <- newTQueueIO
     event_chan <- newChan
     scmEnv <- r5rsEnv
-    sess <- runIOMaybe . loadConfigAction $ initialSession send_queue keyBindings scmEnv
+    let settings = defaultSettings hostname port
+    sess <- runIOMaybe . loadConfigAction $
+        initialSession settings send_queue keyBindings scmEnv
     case sess of
          Nothing -> return ()
          Just sess -> do
@@ -210,10 +211,16 @@ handleGmcp cmd sess = do
 -- Draw the UI.
 drawUI :: Sess -> [Widget()]
 drawUI sess =
-    [vBox [ padBottom Max $ drawBuffer buf scroll
-          , hBorder
-          , showCursor () (Location (curs, 0))
-              (if length input > 0 then str input else str " ")
+    -- TODO: Make this more efficient with format strings or Data.Text or something.
+    [vBox [ drawStatusLine $ "parchment [" ++ (sess ^. (settings . hostname)) ++
+                ":" ++ show (sess ^. (settings . port)) ++ "]"
+          , padBottom Max $ drawBuffer buf scroll
+          , drawStatusLine ""
+          , hBox [ str "> "
+                 , showCursor () (Location (curs, 0))
+                       (if length input > 0 then str input else str " ")
+                 ]
+
           ]]
     where input = getInput sess
           buf = sess ^. buffer
@@ -223,16 +230,27 @@ drawUI sess =
 -- A bit hackish.. this is the number of vertical lines in the interface
 -- that aren't reserved for the buffer.
 nonBufferLines :: Int
-nonBufferLines = 2
+nonBufferLines = 3 -- one for the input line, one each for top/bottom status lines
 
 drawBuffer :: RB.RingBuffer FString -> Int -> Widget()
-drawBuffer buf scroll = 
+drawBuffer buf scroll =
     Widget Greedy Greedy $ do
         ctx <- getContext
-        let num = ctx ^. availHeightL
+        let num_lines = ctx ^. availHeightL
         render $ foldr (<=>) (str "") . fmap drawBufferLine .
-            S.reverse . S.take num . RB.drop scroll $ buf
-    where drawBufferLine [] = str " " -- handle blank case
+            S.reverse . S.take num_lines . RB.drop scroll $ buf
+    where fcharToMarkup fc = (TXT.singleton $ _ch fc) @@ (_attr fc)
+          drawBufferLine [] = str " " -- handle blank case
           drawBufferLine fs = markup . mconcat . fmap fcharToMarkup $ fs
-          fcharToMarkup :: FChar -> Markup V.Attr
-          fcharToMarkup = \t -> (singleton $ _ch t) @@ (_attr t)
+
+drawStatusLine :: String -> Widget()
+drawStatusLine line =
+    Widget Greedy Fixed $ do
+        ctx <- getContext
+        let width = ctx ^. availWidthL
+        let spaces = max 0 $ width - length line
+        let full_line = line ++ (take spaces $ repeat ' ')
+        let formatted = TXT.pack full_line @@
+                            ( flip V.withForeColor V.white
+                            .  flip V.withBackColor (V.rgbColor 0 95 135) $ V.defAttr)
+        render . markup $ formatted

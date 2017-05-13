@@ -2,7 +2,9 @@
 
 module Parchment.Session
     ( Sess(..)
+    , Settings(..)
     , initialSession
+    , defaultSettings
     , addKey
     , delKey
     , sendToServer
@@ -25,6 +27,9 @@ module Parchment.Session
     , unhighlightStr
     , searchBackwards
     -- lenses
+    , settings
+    , hostname
+    , port
     , buffer
     , buf_lines
     , cursor
@@ -62,7 +67,8 @@ import Text.Parsec hiding (Error, getInput)
 import qualified Text.Regex.TDFA.String as R
 
 data Sess = Sess
-    { _buffer :: RB.RingBuffer FString
+    { _settings :: Settings
+    , _buffer :: RB.RingBuffer FString
     , _buf_lines :: Int
     , _scroll_loc :: Int
     , _history :: [String]
@@ -73,6 +79,15 @@ data Sess = Sess
     , _send_queue :: TQueue BS.ByteString
     , _scm_env :: Env
     , _last_search :: Maybe SearchResult
+    }
+data Settings = Settings
+    { _hostname :: String
+    , _port :: Int
+    }
+defaultSettings :: String -> Int -> Settings
+defaultSettings host port = Settings
+    { _hostname = host
+    , _port = port
     }
 data SearchResult = SearchResult
     { _search :: String
@@ -103,14 +118,19 @@ blankRecvState = RecvState
     , _char_attr = V.defAttr
     }
 makeLenses ''Sess
+makeLenses ''Settings
 makeLenses ''SearchResult
 makeLenses ''RecvState
 
 -- Initial state of the session data.
-initialSession :: TQueue BS.ByteString ->
-    Map.Map V.Event (Sess -> EventM () (Next Sess)) -> Env -> Sess
-initialSession q bindings scm_env = Sess
-    { _buffer = flip RB.push emptyF $ RB.newInit emptyF 50000 -- lines in buffer
+initialSession :: Settings ->
+    TQueue BS.ByteString ->
+    Map.Map V.Event (Sess -> EventM () (Next Sess)) ->
+    Env ->
+    Sess
+initialSession settings q bindings scm_env = Sess
+    { _settings = settings
+    , _buffer = flip RB.push emptyF $ RB.newInit emptyF 50000 -- lines in buffer
     , _buf_lines = 0
     , _scroll_loc = 0
     , _history = [""]
