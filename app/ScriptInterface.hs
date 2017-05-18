@@ -248,10 +248,10 @@ hashContains [(HashTable ht), key] = liftThrows . Right . Bool $ M.member key ht
 hashContains _ = liftThrows . Left . Default $ "Usage: (hash-contains? ht key)"
 
 hashGet :: [LispVal] -> IOThrowsError LispVal
-hashGet [(HashTable ht), key] =
-    case M.lookup key ht of
-         Just val -> liftThrows . Right $ val
-         Nothing -> liftThrows . Right . Bool $ False
+hashGet [(HashTable ht), key]
+    | (Just val) <- res = liftThrows . Right $ val
+    | Nothing <- res = liftThrows . Right . Bool $ False
+    where res = M.lookup key ht
 hashGet _ = liftThrows . Left . Default $ "Usage: (hash-get ht key)"
 
 hashSet :: [LispVal] -> IOThrowsError LispVal
