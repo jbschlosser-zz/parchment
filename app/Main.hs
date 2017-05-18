@@ -13,19 +13,24 @@ import Control.Concurrent (forkIO, newChan, writeChan)
 import Control.Concurrent.Async (Concurrently(..), runConcurrently)
 import Control.Concurrent.STM.TQueue
 import Control.Monad (void)
+import qualified Data.Aeson as JSON
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.Conduit.List as CL
 import Data.Conduit.Network
 import Data.Conduit.TQueue (sourceTQueue)
 import Data.Default
+import qualified Data.HashMap.Lazy as HML
 import Data.List (isPrefixOf)
 import Data.Map (fromList)
 import qualified Data.Map.Lazy as Map
 import Data.Maybe (fromJust)
+import Data.Scientific (floatingOrInteger)
 import qualified Data.Sequence as S
 import qualified Data.Text as TXT
 import Data.Text.Markup ((@@))
+import qualified Data.Vector as VEC
 import Data.Word (Word8)
 import qualified Graphics.Vty as V
 import Language.Scheme.Core
@@ -195,7 +200,33 @@ handleTelnet cmd
     | cmd == [tIAC, tWILL, tMSSP] = liftIO . sendRawToServer [tIAC, tDONT, tMSSP]
     | cmd == [tIAC, tWILL, tMSDP] = liftIO . sendRawToServer [tIAC, tDONT, tMSDP]
     | otherwise = return . writeBufferLn (colorize V.red $ show cmd)
-    where handleGmcp cmd = evalHook "gmcp-hook" [SCM.String cmd]
+
+handleGmcp :: String -> Sess -> IOMaybe Sess
+handleGmcp cmd = case parseGmcpCmd cmd of
+                     Nothing -> return . writeBufferLn
+                         (colorize V.red "Bad GMCP cmd encountered")
+                     Just (iden, d) -> evalHook "gmcp-hook" [SCM.String iden, d]
+
+parseGmcpCmd :: String -> Maybe (String, SCM.LispVal)
+parseGmcpCmd cmd
+    | length cwords <= 1 = Nothing
+    | otherwise = do
+          let iden = head cwords
+          let rest = unwords . tail $ cwords
+          json <- JSON.decode . BSL.pack $ rest
+          return (iden, jsonToScheme json)
+    where cwords = words cmd
+
+jsonToScheme :: JSON.Value -> SCM.LispVal
+jsonToScheme JSON.Null = SCM.List []
+jsonToScheme (JSON.Bool b) = SCM.Bool b
+jsonToScheme (JSON.String s) = SCM.String (TXT.unpack s)
+jsonToScheme (JSON.Number n) = case floatingOrInteger n of
+                                   Left r -> SCM.Number . floor $ (r :: Double)
+                                   Right i -> SCM.Number $ i
+jsonToScheme (JSON.Array a) = SCM.List . map jsonToScheme $ VEC.toList a
+jsonToScheme (JSON.Object o) = SCM.HashTable $ fromList . convertVals . HML.toList $ o
+    where convertVals = map (\(a,b) -> (SCM.String (TXT.unpack a), jsonToScheme b))
 
 -- Draw the UI.
 drawUI :: Sess -> [Widget()]

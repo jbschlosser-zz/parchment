@@ -134,8 +134,10 @@
   (send-helper #t input))
 
 ; Hook to run when GMCP is received.
-(define (gmcp-hook cmd)
-  (println (string-append "GMCP: " cmd)))
+(define (gmcp-hook iden data)
+  (composite (list
+              (println (string-append "{gGMCP: " iden))
+              (println (string-append "{g" (string-repr data))))))
 
 ; Hook to run when data is received.
 (define (recv-hook data)
@@ -155,8 +157,9 @@
 
 ; ===== MUD-SPECIFIC =====
 (define-alias "test" "4n4e;world")
-(define-trigger "Welcome" (lambda (m)
-                            (composite
-                             (list
-                              (println (string-append "{m===Triggered on " (car m) "==="))
-                              (send-helper #f "help")))))
+(define-trigger "Welcome"
+  (lambda (m)
+    (composite
+     (list
+      (println (string-append "{m===Triggered on " (car m) "==="))
+      (send-helper #f "look")))))

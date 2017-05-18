@@ -16,7 +16,7 @@ import Brick.Types (EventM, Next)
 import Control.Monad.IO.Class (liftIO)
 import Data.Array (elems)
 import Data.Maybe
-import Data.List (isInfixOf)
+import Data.List (isInfixOf, intercalate)
 import Data.List.Split (splitOn)
 import qualified Data.Map as M
 import qualified Graphics.Vty as V
@@ -229,8 +229,14 @@ compositeAction [(List l)] = liftThrows . Right . actionToOpaque . chainM $
     map opaqueToAction l
 compositeAction _ = liftThrows . Left . Default $ "Usage: (composite <list>)"
 
+toStr :: LispVal -> String
+-- TODO: Fix this awful hack.. doubling up left braces so that color parsing works.
+toStr (HashTable ht) = (++) "{{" . flip (++) "}" . intercalate ", " .
+    map (\(k,v) -> (toStr k) ++ ": " ++ (toStr v)) $ M.assocs ht
+toStr v = show v
+
 stringRepr :: [LispVal] -> IOThrowsError LispVal
-stringRepr [v] = liftThrows . Right . String $ show v
+stringRepr [v] = liftThrows . Right . String $ toStr v
 stringRepr _ = liftThrows . Left . Default $ "Usage: (string-repr <val>)"
 
 makeHash :: [LispVal] -> IOThrowsError LispVal
