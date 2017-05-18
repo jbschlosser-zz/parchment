@@ -314,6 +314,7 @@ addBufferChar sess c
     -- Newlines move to next line.
     | (_ch c) == '\n' = sess & buffer %~ (\buf -> RB.push buf emptyF)
                              & last_search %~ updateSearchResult
+                             & updateScrollLoc
     -- Throw out carriage returns.
     | (_ch c) == '\r' = sess
     -- Add char to end of last line.
@@ -325,6 +326,10 @@ addBufferChar sess c
               | (res ^. line) + 1 >= RB.length (sess ^. buffer) = Nothing
               -- Account for new line in the search result.
               | otherwise = Just $ res & line %~ (+1)
+          updateScrollLoc :: Sess -> Sess
+          updateScrollLoc sess
+              | sess ^. scroll_loc == 0 = sess
+              | otherwise = scrollLines 1 sess
 
 clampExclusive :: Int -> Int -> Int -> Int
 clampExclusive min max = clamp min (max - 1)
