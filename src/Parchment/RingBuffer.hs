@@ -55,16 +55,16 @@ toSeq :: RingBuffer a -> S.Seq a
 toSeq (RB (vec, len)) = S.take len vec
 {-# INLINE toSeq #-}
 
-update :: RingBuffer a -> Int -> a -> RingBuffer a
-update (RB (vec, len)) ind el | ind >= len = error "index out of bounds"
+update :: Int -> a -> RingBuffer a -> RingBuffer a
+update ind el (RB (vec, len)) | ind >= len = error "index out of bounds"
                               | otherwise = RB (S.update ind el vec, len)
 {-# INLINE update #-}
 
 -- | Push a new value into a RingBuffer.  The following will hold:
 --     NewRingBuffer ! 0 === added element
 --     NewRingBuffer ! 1 === OldRingBuffer ! 0
-push :: RingBuffer a -> a -> RingBuffer a
-push (RB (vec, len)) el = case S.viewr vec of
+push :: a -> RingBuffer a -> RingBuffer a
+push el (RB (vec, len)) = case S.viewr vec of
     v' S.:> _ -> RB (el S.<| v', min (S.length vec) $ len + 1)
     _ -> error "internal error"
 {-# INLINE push #-}

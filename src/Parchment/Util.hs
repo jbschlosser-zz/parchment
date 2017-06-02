@@ -4,10 +4,12 @@ module Parchment.Util
     , returnMaybe
     , chainM
     , leave
+    , clampExclusive
     , regexCompOpt
     , regexExecOpt
     ) where
 
+import Brick.Util (clamp)
 import Control.Monad (liftM, ap)
 import Control.Monad.IO.Class
 import Text.Regex.TDFA (CompOption(..), ExecOption(..))
@@ -48,6 +50,9 @@ chainM (x:xs) a = do
 
 leave :: Int -> [a] -> [a]
 leave n lst = take (length lst - n) lst
+
+clampExclusive :: Int -> Int -> Int -> Int
+clampExclusive min max = clamp min (max - 1)
 
 regexCompOpt :: CompOption
 regexCompOpt = CompOption

@@ -38,6 +38,7 @@ import qualified Language.Scheme.Types as SCM
 import Lens.Micro ((^.), (&), (.~))
 import Network (withSocketsDo)
 import Parchment.FString
+import qualified Parchment.Indexed as I
 import qualified Parchment.RingBuffer as RB
 import Parchment.Session
 import Parchment.Telnet
@@ -107,7 +108,7 @@ onAppStart :: Sess -> EventM () Sess
 onAppStart sess = do
     size <- liftIO T.size
     let lines = (T.height $ fromJust size) - nonBufferLines
-    return $ sess & buf_lines .~ lines
+    return $ sess & buffer . I.bounds_func .~ bufferBounds lines
 
 -- Evals the given Scheme hook and runs the returned action.
 evalHook :: String -> [SCM.LispVal] -> Sess -> IOMaybe Sess
@@ -151,7 +152,9 @@ handleEvent sess (VtyEvent e) =
         Nothing -> case e of
                         -- Update the number of buffer lines after the resize.
                         V.EvResize _ lines -> continue $
-                            scrollLines 0 (sess & buf_lines .~ (lines - nonBufferLines))
+                            sess & scrollLines 0 -- force clamping of scroll index
+                                 & buffer . I.bounds_func .~
+                                     bufferBounds (lines - nonBufferLines)
                         -- No binding was found.
                         _ -> continue $ flip writeBufferLn sess $
                             colorize V.magenta $ "No binding found: " ++ show e
@@ -234,31 +237,32 @@ drawUI sess =
     -- TODO: Make this more efficient with format strings or Data.Text or something.
     [vBox [ drawStatusLine $ "parchment [" ++ (sess ^. (settings . hostname)) ++
                 ":" ++ show (sess ^. (settings . port)) ++ "]"
-          , padBottom Max $ drawBuffer buf scroll
+          , padBottom Max . drawBuffer $ sess ^. buffer
           , drawStatusLine ""
           , hBox [ str "> "
-                 , showCursor () (Location (curs, 0))
+                 , showCursor () (Location (sess ^. cursor, 0))
                        (if length input > 0 then str input else str " ")
                  ]
 
           ]]
     where input = getInput sess
-          buf = sess ^. buffer
-          curs = sess ^. cursor
-          scroll = sess ^. scroll_loc
 
 -- A bit hackish.. this is the number of vertical lines in the interface
 -- that aren't reserved for the buffer.
 nonBufferLines :: Int
 nonBufferLines = 3 -- one for the input line, one each for top/bottom status lines
 
-drawBuffer :: RB.RingBuffer FString -> Int -> Widget()
-drawBuffer buf scroll =
+-- lines, buffer -> bounds
+bufferBounds :: Int -> RB.RingBuffer a -> (Int, Int)
+bufferBounds lines rb = (0, RB.length rb - lines + 1)
+
+drawBuffer :: I.Indexed (RB.RingBuffer FString) -> Widget()
+drawBuffer buf =
     Widget Greedy Greedy $ do
         ctx <- getContext
         let num_lines = ctx ^. availHeightL
         render $ foldr (<=>) (str "") . fmap drawBufferLine .
-            S.reverse . S.take num_lines . RB.drop scroll $ buf
+            S.reverse . S.take num_lines . RB.drop (I.getIndex buf) $ buf ^. I.value
     where fcharToMarkup fc = (TXT.singleton $ _ch fc) @@ (_attr fc)
           drawBufferLine [] = str " " -- handle blank case
           drawBufferLine fs = markup . mconcat . fmap fcharToMarkup $ fs

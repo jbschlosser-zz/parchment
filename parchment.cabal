@@ -19,6 +19,7 @@ library
       Parchment
       Parchment.EscSeq
       Parchment.FString
+      Parchment.Indexed
       Parchment.ParseState
       Parchment.RingBuffer
       Parchment.Session
