@@ -2,17 +2,14 @@
 
 module Parchment.Indexed
     ( Indexed(..)
-    , adjustIndex
-    , bounds_func
     , atCurrIndex
-    , getIndex
-    , setIndex
     , indexed
     , value
+    , bounds_func
+    , index
     ) where
 
-import Lens.Micro ((^.), (&), (.~))
-import Lens.Micro.TH (makeLenses)
+import Lens.Micro ((^.), Lens')
 import Parchment.Util
 
 data Indexed a = Indexed
@@ -20,8 +17,25 @@ data Indexed a = Indexed
     , _index :: Int
     , _bounds_func :: (a -> (Int, Int))
     }
-makeLenses ''Indexed
 
+-- Lenses.
+index :: Lens' (Indexed a) Int
+index f (Indexed { _value = val, _index = idx, _bounds_func = bf}) =
+    fmap (\new_idx -> Indexed { _value = val, _index = new_idx, _bounds_func = bf}) (cf idx)
+    where cf = fmap (clampToBounds $ bf val) . f
+
+value :: Lens' (Indexed a) a
+value f (Indexed { _value = val, _index = idx, _bounds_func = bf}) =
+    fmap (\new_val -> Indexed { _value = new_val, _index = idx, _bounds_func = bf}) (f val)
+
+bounds_func :: Lens' (Indexed a) (a -> (Int, Int))
+bounds_func f (Indexed { _value = val, _index = idx, _bounds_func = bf}) =
+    fmap (\new_bf -> Indexed
+                     { _value = val
+                     , _index = clampToBounds (new_bf val) idx -- apply new bounds
+                     , _bounds_func = new_bf}) (f bf)
+
+-- Other functions.
 indexed :: a -> (a -> (Int, Int)) -> Indexed a
 indexed value bounds_func = Indexed
     { _value = value
@@ -29,19 +43,8 @@ indexed value bounds_func = Indexed
     , _bounds_func = bounds_func
     }
 
-bounds :: Indexed a -> (Int, Int)
-bounds i = (i ^. bounds_func) (i ^. value)
-
 atCurrIndex :: (a -> Int -> b) -> Indexed a -> b
 atCurrIndex idx_func i = idx_func (i ^. value) (i ^. index)
 
-getIndex :: Indexed a -> Int
-getIndex i = i ^. index
-
-setIndex :: Int -> Indexed a -> Indexed a
-setIndex idx i = i & index .~ new_idx
-    where (imin, imax) = bounds i
-          new_idx = clampExclusive imin imax idx
-
-adjustIndex :: Int -> Indexed a -> Indexed a
-adjustIndex n i = setIndex (i ^. index + n) i
+clampToBounds :: (Int, Int) -> Int -> Int
+clampToBounds (imin, imax) val = clampExclusive imin imax val

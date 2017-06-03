@@ -152,8 +152,7 @@ handleEvent sess (VtyEvent e) =
         Nothing -> case e of
                         -- Update the number of buffer lines after the resize.
                         V.EvResize _ lines -> continue $
-                            sess & scrollLines 0 -- force clamping of scroll index
-                                 & buffer . I.bounds_func .~
+                            sess & buffer . I.bounds_func .~
                                      bufferBounds (lines - nonBufferLines)
                         -- No binding was found.
                         _ -> continue $ flip writeBufferLn sess $
@@ -262,7 +261,7 @@ drawBuffer buf =
         ctx <- getContext
         let num_lines = ctx ^. availHeightL
         render $ foldr (<=>) (str "") . fmap drawBufferLine .
-            S.reverse . S.take num_lines . RB.drop (I.getIndex buf) $ buf ^. I.value
+            S.reverse . S.take num_lines . I.atCurrIndex (flip RB.drop) $ buf
     where fcharToMarkup fc = (TXT.singleton $ _ch fc) @@ (_attr fc)
           drawBufferLine [] = str " " -- handle blank case
           drawBufferLine fs = markup . mconcat . fmap fcharToMarkup $ fs

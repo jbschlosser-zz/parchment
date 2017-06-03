@@ -144,7 +144,7 @@ getInput sess = sess ^. history & I.atCurrIndex (RB.!)
 addInput :: Char -> Sess -> Sess
 addInput ch sess = sess & history . I.value %~ RB.update hist_index (left ++ ch:right)
                         & moveCursor 1
-    where hist_index = I.getIndex $ sess ^. history
+    where hist_index = sess ^. history . I.index
           input = getInput sess
           (left, right) = splitAt (sess ^. cursor) input
 
@@ -153,7 +153,7 @@ backspaceInput sess
     | left == "" = sess
     | otherwise = sess & history . I.value %~ RB.update hist_index (init left ++ right)
                        & moveCursor (-1)
-    where hist_index = I.getIndex $ sess ^. history
+    where hist_index = sess ^. history . I.index
           input = getInput sess
           (left, right) = splitAt (sess ^. cursor) input
 
@@ -161,7 +161,7 @@ deleteInput :: Sess -> Sess
 deleteInput sess
     | right == "" = sess
     | otherwise = sess & history . I.value %~ RB.update hist_index (left ++ tail right)
-    where hist_index = I.getIndex $ sess ^. history
+    where hist_index = sess ^. history . I.index
           input = getInput sess
           (left, right) = splitAt (sess ^. cursor) input
 
@@ -197,11 +197,11 @@ searchBackwards str sess =
          Right regex -> case searchBackwardsHelper regex (sess ^. buffer . I.value) (startLine sess) of
                              Just sr@(line,_,_) -> highlightStr sr . setSearchRes str (Just sr) .
                                  unhighlightPrevious . scrollLines
-                                     (line - (I.getIndex $ sess ^. buffer)) $ sess
+                                     (line - (sess ^. buffer . I.index)) $ sess
                              Nothing -> writeBufferLn
                                 (colorize V.red $ "Search string not found!") .
                                  setSearchRes str Nothing . unhighlightPrevious $
-                                    sess & buffer %~ I.setIndex 0
+                                    sess & buffer . I.index .~ 0
     where startLine sess =
               case sess ^. last_search of
                    Nothing -> 0
@@ -216,7 +216,7 @@ searchBackwards str sess =
           setSearchRes _ Nothing sess = sess & last_search .~ Nothing
 
 scrollLines :: Int -> Sess -> Sess
-scrollLines n = buffer %~ I.adjustIndex n
+scrollLines n = buffer . I.index %~ (+) n
 
 pageUp :: Sess -> Sess
 pageUp = scrollLines 10
@@ -227,12 +227,12 @@ pageDown = scrollLines $ -10
 addToHistory :: String -> Sess -> Sess
 addToHistory s sess =
     sess & history . I.value %~ RB.push "" . RB.update 0 s
-         & history %~ I.setIndex 0
+         & history . I.index .~ 0
          & cursor .~ 0
 
 scrollHistory :: Int -> Sess -> Sess
 scrollHistory n sess = sess &
-    history %~ I.adjustIndex n &
+    history . I.index %~ (+) n &
     moveCursor 999999 -- big arbitrary number to get to the end of the line
 
 historyOlder :: Sess -> Sess
@@ -242,7 +242,7 @@ historyNewer :: Sess -> Sess
 historyNewer = scrollHistory $ -1
 
 historyNewest :: Sess -> Sess
-historyNewest = history %~ I.setIndex 0
+historyNewest = history . I.index .~ 0
 
 sendToServer :: String -> Sess -> IO Sess
 sendToServer str sess = do
@@ -321,5 +321,5 @@ addBufferChar sess c
               | otherwise = Just $ res & line %~ (+1)
           updateScrollLoc :: Sess -> Sess
           updateScrollLoc sess
-              | (sess ^. buffer & I.getIndex) == 0 = sess
+              | (sess ^. buffer . I.index) == 0 = sess
               | otherwise = scrollLines 1 sess
