@@ -35,7 +35,7 @@ import Data.Word (Word8)
 import qualified Graphics.Vty as V
 import Language.Scheme.Core
 import qualified Language.Scheme.Types as SCM
-import Lens.Micro ((^.), (&), (.~))
+import Lens.Micro ((^.), (&), (.~), (^?), each)
 import Network (withSocketsDo)
 import Parchment.FString
 import qualified Parchment.Indexed as I
@@ -108,7 +108,7 @@ onAppStart :: Sess -> EventM () Sess
 onAppStart sess = do
     size <- liftIO T.size
     let lines = (T.height $ fromJust size) - nonBufferLines
-    return $ sess & buffer . I.bounds_func .~ bufferBounds lines
+    return $ sess & buffers . I.value . each . I.bounds_func .~ bufferBounds lines
 
 -- Evals the given Scheme hook and runs the returned action.
 evalHook :: String -> [SCM.LispVal] -> Sess -> IOMaybe Sess
@@ -119,10 +119,9 @@ evalHook name args sess = do
             Right l -> do
                 case l of
                     SCM.Opaque _ -> (opaqueToAction l) sess
-                    x -> returnMaybe . Just $ sess & writeBufferLn
-                        (colorize V.red $ "Expected an action, found: " ++ show x)
-            Left err -> returnMaybe . Just $ sess & writeBufferLn
-                (colorize V.red $ show err)
+                    x -> returnMaybe . Just $
+                        sess & logError ("Expected an action, found: " ++ show x)
+            Left err -> returnMaybe . Just $ sess & logError (show err)
 
 -- Key bindings.
 keyBindings = fromList $ map rawKeyBinding rawKeys ++
@@ -152,11 +151,10 @@ handleEvent sess (VtyEvent e) =
         Nothing -> case e of
                         -- Update the number of buffer lines after the resize.
                         V.EvResize _ lines -> continue $
-                            sess & buffer . I.bounds_func .~
-                                     bufferBounds (lines - nonBufferLines)
+                            sess & buffers . I.value . each . I.bounds_func .~
+                                bufferBounds (lines - nonBufferLines)
                         -- No binding was found.
-                        _ -> continue $ flip writeBufferLn sess $
-                            colorize V.magenta $ "No binding found: " ++ show e
+                        _ -> continue $ sess & logInfo ("No binding found: " ++ show e)
 handleEvent sess (AppEvent e) =
     case e of
         RecvEvent bs -> do
@@ -169,7 +167,7 @@ handleEvent sess (AppEvent e) =
             let sess3 = sess2 & (recv_state . text) .~ []
                               & (recv_state . telnet_cmds) .~ []
             -- Write received text to the buffer.
-            let sess4 = writeBuffer recv_text sess3
+            let sess4 = writeBuffer mainBufferNum recv_text sess3
             -- Call the recv hook.
             let clean = filter (not . (==) '\r') $ removeFormatting recv_text
             res <- liftIO . runIOMaybe $ evalHook "recv-hook" [SCM.String clean] sess4
@@ -201,13 +199,12 @@ handleTelnet cmd
     | cmd == [tIAC, tWILL, tMCCP2] = liftIO . sendRawToServer [tIAC, tDONT, tMCCP2]
     | cmd == [tIAC, tWILL, tMSSP] = liftIO . sendRawToServer [tIAC, tDONT, tMSSP]
     | cmd == [tIAC, tWILL, tMSDP] = liftIO . sendRawToServer [tIAC, tDONT, tMSDP]
-    | otherwise = return . writeBufferLn (colorize V.red $ show cmd)
+    | otherwise = return . logError (show cmd)
 
 handleGmcp :: String -> Sess -> IOMaybe Sess
-handleGmcp cmd = case parseGmcpCmd cmd of
-                     Nothing -> return . writeBufferLn
-                         (colorize V.red "Bad GMCP cmd encountered")
-                     Just (iden, d) -> evalHook "gmcp-hook" [SCM.String iden, d]
+handleGmcp cmd
+   | Just (iden, d) <- parseGmcpCmd cmd = evalHook "gmcp-hook" [SCM.String iden, d]
+   | otherwise = return . logError "Bad GMCP cmd encountered"
 
 parseGmcpCmd :: String -> Maybe (String, SCM.LispVal)
 parseGmcpCmd cmd
@@ -236,7 +233,7 @@ drawUI sess =
     -- TODO: Make this more efficient with format strings or Data.Text or something.
     [vBox [ drawStatusLine $ "parchment [" ++ (sess ^. (settings . hostname)) ++
                 ":" ++ show (sess ^. (settings . port)) ++ "]"
-          , padBottom Max . drawBuffer $ sess ^. buffer
+          , padBottom Max . drawBuffer . fromJust $ sess ^? currentBuffer
           , drawStatusLine ""
           , hBox [ str "> "
                  , showCursor () (Location (sess ^. cursor, 0))

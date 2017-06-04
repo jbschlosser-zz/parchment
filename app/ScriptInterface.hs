@@ -42,14 +42,17 @@ scriptInterface = r5rsEnv >>= flip extendEnv
     , ((varNamespace, "history-newer"), sessFuncToOpaque historyNewer)
     , ((varNamespace, "do-nothing"), sessFuncToOpaque id)
     , ((varNamespace, "reload-config"), actionToOpaque loadConfigAction)
+    , ((varNamespace, "toggle-buffer"), sessFuncToOpaque toggleBuffer)
     , ((varNamespace, "add-to-history"), CustFunc addToHistoryWrapper)
     , ((varNamespace, "send"), CustFunc sendToServerWrapper)
     , ((varNamespace, "bind"), CustFunc bindWrapper)
     , ((varNamespace, "scroll-history"), CustFunc scrollHistoryWrapper)
     , ((varNamespace, "scroll-lines"), CustFunc scrollLinesWrapper)
     , ((varNamespace, "search-backwards"), CustFunc searchBackwardsWrapper)
-    , ((varNamespace, "print"), CustFunc writeBufferWrapper)
-    , ((varNamespace, "println"), CustFunc writeBufferLnWrapper)
+    , ((varNamespace, "print"), CustFunc (writeBufferWrapper debugBufferNum))
+    , ((varNamespace, "println"), CustFunc (writeBufferLnWrapper debugBufferNum))
+    , ((varNamespace, "write"), CustFunc (writeBufferWrapper mainBufferNum))
+    , ((varNamespace, "writeln"), CustFunc (writeBufferLnWrapper mainBufferNum))
     , ((varNamespace, "add-input"), CustFunc addInputWrapper)
     , ((varNamespace, "move-cursor"), CustFunc moveCursorWrapper)
     , ((varNamespace, "composite"), CustFunc compositeAction)
@@ -80,8 +83,7 @@ loadConfigAction :: Sess -> IOMaybe Sess
 loadConfigAction sess = do
     (scmEnv, configErr) <- liftIO loadConfig
     case configErr of
-        Just err -> returnMaybe . Just . flip writeBufferLn sess $
-            colorize V.red $ "Config error: " ++ err
+        Just err -> returnMaybe . Just . logError ("Config error: " ++ err) $ sess
         Nothing -> do
             let to_eval = List [Atom "load-hook"]
             res <- liftIO $ evalLisp' scmEnv to_eval
@@ -89,18 +91,16 @@ loadConfigAction sess = do
                  Right l -> do
                      case l of
                           Opaque _ -> opaqueToAction l (sess & scm_env .~ scmEnv)
-                          x -> returnMaybe . Just . writeBufferLn (colorize V.red $
-                               "Expected an action, found: " ++ (show x)) $ sess
-                 Left err -> returnMaybe . Just . writeBufferLn
-                     (colorize V.red $ show err) $ sess
+                          x -> returnMaybe . Just . logError
+                              ("Expected an action, found: " ++ show x) $ sess
+                 Left err -> returnMaybe . Just . logError (show err) $ sess
 
 -- Helper functions for converting between lisp types and Sess actions.
 opaqueToAction :: LispVal -> Sess -> IOMaybe Sess
-opaqueToAction lv =
-    case fromOpaque lv :: ThrowsError (Sess -> IOMaybe Sess) of
-         Right f -> f
-         Left err -> returnMaybe . Just . writeBufferLn
-             (colorize V.red $ "Error: " ++ (show err))
+opaqueToAction lv
+    | Right f <- action_res = f
+    | Left err <- action_res = returnMaybe . Just . logError ("Error: " ++ show err)
+    where action_res = fromOpaque lv :: ThrowsError (Sess -> IOMaybe Sess)
 
 actionToOpaque :: (Sess -> IOMaybe Sess) -> LispVal
 actionToOpaque = toOpaque
@@ -196,21 +196,22 @@ scrollLinesWrapper _ = liftThrows . Left . Default $ "Usage: (scroll-lines <num>
 searchBackwardsWrapper :: [LispVal] -> IOThrowsError LispVal
 searchBackwardsWrapper [(String s)] =
     liftThrows . Right . sessFuncToOpaque $ searchBackwards s
-searchBackwardsWrapper _ = liftThrows . Left . Default $ "Usage: (search-backwards <string>)"
+searchBackwardsWrapper _ = liftThrows . Left . Default $
+    "Usage: (search-backwards <string>)"
 
 addToHistoryWrapper :: [LispVal] -> IOThrowsError LispVal
 addToHistoryWrapper [(String s)] = liftThrows . Right . sessFuncToOpaque . addToHistory $ s
 addToHistoryWrapper _ = liftThrows . Left . Default $ "Usage: (add-to-history str)"
 
-writeBufferWrapper :: [LispVal] -> IOThrowsError LispVal
-writeBufferWrapper [(String s)] = liftThrows . Right . sessFuncToOpaque . writeBuffer $
-    formatStr s
-writeBufferWrapper _ = liftThrows . Left . Default $ "Usage: (print str)"
+writeBufferWrapper :: Int -> [LispVal] -> IOThrowsError LispVal
+writeBufferWrapper bnum [(String s)] = liftThrows . Right . sessFuncToOpaque .
+    writeBuffer bnum $ formatStr s
+writeBufferWrapper _ _ = liftThrows . Left . Default $ "Usage: (print str)"
 
-writeBufferLnWrapper :: [LispVal] -> IOThrowsError LispVal
-writeBufferLnWrapper [(String s)] = liftThrows . Right . sessFuncToOpaque . writeBufferLn $
-    formatStr s
-writeBufferLnWrapper _ = liftThrows . Left . Default $ "Usage: (println str)"
+writeBufferLnWrapper :: Int -> [LispVal] -> IOThrowsError LispVal
+writeBufferLnWrapper bnum [(String s)] = liftThrows . Right . sessFuncToOpaque .
+    writeBufferLn bnum $ formatStr s
+writeBufferLnWrapper _ _ = liftThrows . Left . Default $ "Usage: (println str)"
 
 sendToServerWrapper :: [LispVal] -> IOThrowsError LispVal
 sendToServerWrapper [(String s)] = liftThrows . Right . ioSessFuncToOpaque $ sendToServer s
