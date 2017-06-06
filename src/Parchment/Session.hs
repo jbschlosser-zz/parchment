@@ -40,6 +40,7 @@ module Parchment.Session
     , hostname
     , port
     , buffers
+    , buffer
     , cursor
     , scm_env
     , bindings
@@ -76,14 +77,22 @@ import qualified Text.Regex.TDFA.String as R
 
 data Sess = Sess
     { _settings :: Settings
-    , _buffers :: I.Indexed [I.Indexed (RB.RingBuffer FString)]
+    , _buffers :: I.Indexed [Buffer]
     , _history :: I.Indexed (RB.RingBuffer String)
     , _cursor :: Int
     , _bindings :: Map.Map V.Event (Sess -> EventM () (Next Sess))
     , _recv_state :: RecvState
     , _send_queue :: TQueue BS.ByteString
     , _scm_env :: Env
+    }
+data Buffer = Buffer
+    { _buffer :: I.Indexed (RB.RingBuffer FString)
     , _last_search :: Maybe SearchResult
+    }
+emptyBuffer :: Int -> Buffer
+emptyBuffer nlines = Buffer
+    { _buffer = I.indexed (RB.newInit emptyF nlines & RB.push emptyF) $ const (0,1)
+    , _last_search = Nothing
     }
 data Settings = Settings
     { _hostname :: String
@@ -123,6 +132,7 @@ blankRecvState = RecvState
     , _char_attr = V.defAttr
     }
 makeLenses ''Sess
+makeLenses ''Buffer
 makeLenses ''Settings
 makeLenses ''SearchResult
 makeLenses ''RecvState
@@ -135,7 +145,7 @@ initialSession :: Settings ->
     Sess
 initialSession settings q bindings scm_env = Sess
     { _settings = settings
-    , _buffers = I.indexed [debug_buffer, main_buffer] (\b -> (0, length b))
+    , _buffers = I.indexed [emptyBuffer b_lines, emptyBuffer b_lines] (\b -> (0, length b))
           & I.index .~ mainBufferNum
     , _history = I.indexed (RB.newInit "" 1000 & RB.push "") (\h -> (0, RB.length h))
     , _cursor = 0
@@ -143,10 +153,8 @@ initialSession settings q bindings scm_env = Sess
     , _recv_state = blankRecvState
     , _send_queue = q
     , _scm_env = scm_env
-    , _last_search = Nothing
     }
-    where main_buffer = I.indexed (RB.newInit emptyF 50000 & RB.push emptyF) $ const (0,1)
-          debug_buffer = I.indexed (RB.newInit emptyF 50000 & RB.push emptyF) $ const (0,1)
+    where b_lines = 50000
 
 -- === ACTIONS ===
 getInput :: Sess -> String
@@ -216,38 +224,39 @@ highlightStr bnum = flip (modifyBuffer bnum) $ withStyle V.standout
 unhighlightStr :: Int -> (Int, Int, Int) -> Sess -> Sess
 unhighlightStr bnum = flip (modifyBuffer bnum) $ withStyle V.defaultStyleMask
 
--- Specifically searches in the current buffer.
-searchBackwards :: String -> Sess -> Sess
-searchBackwards str sess
+-- Searches the specified buffer.
+searchBackwards :: Int -> String -> Sess -> Sess
+searchBackwards bnum str sess
     | Left err <- regex_res = sess & logError ("Regex error: " ++ err)
     | Right regex <- regex_res =
-         case searchBackwardsHelper regex curr_buf start_line of
+         case searchBackwardsHelper regex (curr_buf ^. buffer . I.value) start_line of
              Just sr@(line,_,_) -> sess & unhighlightPrevious
-                                        & highlightStr (currentBufferNum sess) sr
+                                        & highlightStr bnum sr
                                         & setSearchRes str (Just sr)
                                         & scrollLines (line - curr_buf_scroll)
              Nothing -> sess -- & logError ("Search string not found: " ++ str)
                              & unhighlightPrevious
                              & setSearchRes str Nothing
-                             & currentBuffer . I.index .~ 0
+                             & (nBuffer bnum) . buffer . I.index .~ 0
     where regex_res = R.compile regexCompOpt regexExecOpt str
-          curr_buf = (fromJust $ sess ^? currentBuffer . I.value)
-          curr_buf_scroll = (fromJust $ sess ^? currentBuffer . I.index)
+          curr_buf = fromJust $ sess ^? (nBuffer bnum)
+          curr_buf_scroll = (curr_buf ^. buffer . I.index)
+          lsearch = curr_buf ^. last_search
           start_line
-              | Just sr <- sess ^. last_search =
+              | Just sr <- lsearch =
                     if (sr ^. search) == str then (sr ^. line) + 1 else 0
               | otherwise = 0
           unhighlightPrevious sess
-              | Just sr <- sess ^. last_search =
-                    unhighlightStr (currentBufferNum sess)
+              | Just sr <- lsearch =
+                    unhighlightStr bnum
                         ((sr ^. line), (sr ^. start), (sr ^. end)) $ sess
               | otherwise = sess
           setSearchRes str (Just (line, start, end)) sess =
-              sess & last_search .~ Just (searchResult str line start end)
-          setSearchRes _ Nothing sess = sess & last_search .~ Nothing
+              sess & (nBuffer bnum) . last_search .~ Just (searchResult str line start end)
+          setSearchRes _ Nothing sess = sess & (nBuffer bnum) . last_search .~ Nothing
 
 scrollLines :: Int -> Sess -> Sess
-scrollLines n = currentBuffer . I.index %~ (+) n
+scrollLines n = currentBuffer . buffer . I.index %~ (+) n
 
 pageUp :: Sess -> Sess
 pageUp = scrollLines 10
@@ -294,16 +303,15 @@ receiveServerData sess bs =
 mainBufferNum = 1
 debugBufferNum = 0
 currentBufferNum sess = (sess ^. buffers . I.index)
-nBuffer :: (Applicative f, Functor f) => Int -> (I.Indexed (RB.RingBuffer FString) -> f (I.Indexed (RB.RingBuffer FString))) -> Sess -> f Sess
+nBuffer :: (Applicative f, Functor f) => Int -> (Buffer -> f Buffer) -> Sess -> f Sess
 nBuffer idx = buffers . I.value . ix idx
-currentBuffer :: (Applicative f, Functor f) => (I.Indexed (RB.RingBuffer FString) -> f (I.Indexed (RB.RingBuffer FString))) -> Sess -> f Sess
-currentBuffer func sess = (buffers . I.value . ix (currentBufferNum sess)) func sess
+currentBuffer func sess = nBuffer (currentBufferNum sess) func sess
 
 -- buffer number, (line, start index, end index), modification func, session
 modifyBuffer :: Int -> (Int, Int, Int) -> (FChar -> FChar) -> Sess -> Sess
 modifyBuffer bnum (line, start, end) func sess =
-    sess & nBuffer bnum . I.value %~ RB.update line new_str
-    where line_str = (fromJust $ sess ^? nBuffer bnum . I.value) RB.! line
+    sess & nBuffer bnum . buffer . I.value %~ RB.update line new_str
+    where line_str = (fromJust $ sess ^? nBuffer bnum . buffer . I.value) RB.! line
           replaceAtIndex f n ls = a ++ ((f item):b)
               where (a, (item:b)) = splitAt n ls
           new_str = (foldr (flip (.)) id $ flip map [start..end] $
@@ -346,22 +354,23 @@ handleServerByte recv_state b
 addBufferChar :: Int -> Sess -> FChar -> Sess
 addBufferChar bnum sess c
     -- Newlines move to next line.
-    | (_ch c) == '\n' = sess & nBuffer bnum . I.value %~ RB.push emptyF
-                             & last_search %~ updateSearchResult
+    | (_ch c) == '\n' = sess & nBuffer bnum . buffer . I.value %~ RB.push emptyF
+                             & nBuffer bnum . last_search %~ updateSearchResult
                              & updateScrollLoc
     -- Throw out carriage returns.
     | (_ch c) == '\r' = sess
     -- Add char to end of last line.
-    | otherwise = sess & nBuffer bnum . I.value %~ RB.update 0
-          (((fromJust $ sess ^? nBuffer bnum . I.value) RB.! 0) ++ [c])
+    | otherwise = sess & nBuffer bnum . buffer . I.value %~ RB.update 0
+          (((fromJust $ sess ^? nBuffer bnum . buffer . I.value) RB.! 0) ++ [c])
     where updateSearchResult :: Maybe SearchResult -> Maybe SearchResult
           updateSearchResult Nothing = Nothing
           updateSearchResult (Just res)
               -- Search result will get pushed out of the buffer; flush it.
-              | (res ^. line) + 1 >= RB.length (fromJust $ sess ^? nBuffer bnum . I.value) = Nothing
+              | (res ^. line) + 1 >= RB.length
+                    (fromJust $ sess ^? nBuffer bnum . buffer . I.value) = Nothing
               -- Account for new line in the search result.
               | otherwise = Just $ res & line %~ (+1)
           updateScrollLoc :: Sess -> Sess
           updateScrollLoc sess
-              | (fromJust $ sess ^? nBuffer bnum . I.index) == 0 = sess
+              | (fromJust $ sess ^? nBuffer bnum . buffer . I.index) == 0 = sess
               | otherwise = scrollLines 1 sess

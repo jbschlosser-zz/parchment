@@ -195,7 +195,8 @@ scrollLinesWrapper _ = liftThrows . Left . Default $ "Usage: (scroll-lines <num>
 
 searchBackwardsWrapper :: [LispVal] -> IOThrowsError LispVal
 searchBackwardsWrapper [(String s)] =
-    liftThrows . Right . sessFuncToOpaque $ searchBackwards s
+    liftThrows . Right . sessFuncToOpaque $ searchCurrent
+    where searchCurrent sess = searchBackwards (currentBufferNum sess) s $ sess
 searchBackwardsWrapper _ = liftThrows . Left . Default $
     "Usage: (search-backwards <string>)"
 

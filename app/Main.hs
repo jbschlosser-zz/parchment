@@ -108,7 +108,7 @@ onAppStart :: Sess -> EventM () Sess
 onAppStart sess = do
     size <- liftIO T.size
     let lines = (T.height $ fromJust size) - nonBufferLines
-    return $ sess & buffers . I.value . each . I.bounds_func .~ bufferBounds lines
+    return $ sess & buffers . I.value . each . buffer . I.bounds_func .~ bufferBounds lines
 
 -- Evals the given Scheme hook and runs the returned action.
 evalHook :: String -> [SCM.LispVal] -> Sess -> IOMaybe Sess
@@ -151,7 +151,7 @@ handleEvent sess (VtyEvent e) =
         Nothing -> case e of
                         -- Update the number of buffer lines after the resize.
                         V.EvResize _ lines -> continue $
-                            sess & buffers . I.value . each . I.bounds_func .~
+                            sess & buffers . I.value . each . buffer . I.bounds_func .~
                                 bufferBounds (lines - nonBufferLines)
                         -- No binding was found.
                         _ -> continue $ sess & logInfo ("No binding found: " ++ show e)
@@ -233,7 +233,7 @@ drawUI sess =
     -- TODO: Make this more efficient with format strings or Data.Text or something.
     [vBox [ drawStatusLine $ "parchment [" ++ (sess ^. (settings . hostname)) ++
                 ":" ++ show (sess ^. (settings . port)) ++ "]"
-          , padBottom Max . drawBuffer . fromJust $ sess ^? currentBuffer
+          , padBottom Max . drawBuffer . fromJust $ sess ^? currentBuffer . buffer
           , drawStatusLine ""
           , hBox [ str "> "
                  , showCursor () (Location (sess ^. cursor, 0))
