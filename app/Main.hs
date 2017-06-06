@@ -130,7 +130,7 @@ keyBindings = fromList $ map rawKeyBinding rawKeys ++
     , ((V.EvKey V.KDel []), continue . deleteInput)
     , ((V.EvKey V.KEnter []), \sess -> do
         let input = getInput sess
-        let new_sess = sess & clearInput & historyNewest
+        let new_sess = sess & historyNewest & clearInput
         liftAction (evalHook "send-hook" [SCM.String input]) new_sess)
     , ((V.EvKey V.KPageUp []), continue . pageUp)
     , ((V.EvKey V.KPageDown []), continue . pageDown)

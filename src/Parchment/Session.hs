@@ -185,8 +185,9 @@ deleteInput sess
           (left, right) = splitAt (sess ^. cursor) input
 
 clearInput :: Sess -> Sess
-clearInput sess = sess & history . I.value %~ RB.update 0 ""
+clearInput sess = sess & history . I.value %~ RB.update hist_index ""
                        & cursor .~ 0
+    where hist_index = sess ^. history . I.index
 
 moveCursor :: Int -> Sess -> Sess
 moveCursor n sess = sess & cursor %~ clamp 0 (length $ getInput sess) . (+) n
@@ -267,7 +268,7 @@ pageDown = scrollLines $ -10
 addToHistory :: String -> Sess -> Sess
 addToHistory s sess =
     sess & history . I.value %~ RB.push "" . RB.update 0 s
-         & history . I.index .~ 0
+         & historyNewest
          & cursor .~ 0
 
 scrollHistory :: Int -> Sess -> Sess
