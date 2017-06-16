@@ -34,14 +34,14 @@
   (set! *triggers* (hash-set *triggers* pattern action)))
 
 ; ----- Convenience functions -----
-; Send input, optionally add to history, and print to scrollback buffer.
+; Send input, optionally add to history, and write to scrollback buffer.
 (define (full-send hist s)
   (if hist
     (composite (list (send s)
                      (add-to-history s)
-                     (println (string-append "{y" s))))
+                     (writeln (string-append "{y" s))))
     (composite (list (send s)
-                     (println (string-append "{y" s))))))
+                     (writeln (string-append "{y" s))))))
 
 ; Print a message.
 (define (message m)
@@ -81,6 +81,12 @@
     ; Reload config.
     ((string=? cmd "reload")
      reload-config)
+    ; Eval.
+    ((string-prefix? "eval " cmd)
+     (letrec* ((to-eval (string-drop cmd 5))
+               (result (eval (read (open-input-string to-eval)))))
+              (println (string-append "> " to-eval (string #\newline)
+                                      "{g" (string-repr result)))))
     ; Invalid command.
     (else
       (println (string-append "{rInvalid command: " cmd)))))
@@ -96,6 +102,7 @@
       (bind "M-g" (scroll-lines 9999999))
       (bind "S-Up" (scroll-lines 1))
       (bind "S-Down" (scroll-lines -1))
+      (bind "M-d" toggle-buffer)
       (bind "M-r" (composite (list reload-config
                                    (println "{bConfig reloaded.")))))))
 
