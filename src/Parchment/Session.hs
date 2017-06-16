@@ -296,6 +296,7 @@ sendRawToServer bytes sess = do
     atomically $ writeTQueue (sess ^. send_queue) $ BS.pack bytes
     return sess
 
+-- TODO: Handle doubling of IAC bytes within the string.
 sendGmcp :: String -> Sess -> IO Sess
 sendGmcp s = sendRawToServer $ [tIAC, tSB, tGMCP] ++
                                (BS.unpack . BSC.pack $ s) ++
