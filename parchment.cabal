@@ -25,6 +25,7 @@ library
       Parchment.Session
       Parchment.Telnet
       Parchment.Util
+      Parchment.WorldMap
   build-depends:       base >= 4.7 && < 5
                      , aeson
                      , bytestring >= 0.10
@@ -39,6 +40,8 @@ library
                      , mtl
                      , regex-tdfa
                      , stm
+                     , unordered-containers
+                     , hashable
   default-language:    Haskell2010
 
 executable parchment

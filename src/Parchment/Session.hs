@@ -36,6 +36,7 @@ module Parchment.Session
     , debugBufferNum
     , mainBufferNum
     , currentBufferNum
+    , addWorldRoom
     -- lenses
     , settings
     , hostname
@@ -58,6 +59,7 @@ import Control.Monad.STM (atomically)
 import Data.Array ((!))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
+import qualified Data.HashSet as HS
 import Data.List (foldl', splitAt)
 import qualified Data.Map.Lazy as Map
 import Data.Maybe (isJust, fromJust)
@@ -74,6 +76,7 @@ import Parchment.ParseState
 import qualified Parchment.RingBuffer as RB
 import Parchment.Telnet
 import Parchment.Util
+import qualified Parchment.WorldMap as WM
 import qualified Text.Regex.TDFA.String as R
 
 data Sess = Sess
@@ -85,6 +88,7 @@ data Sess = Sess
     , _recv_state :: RecvState
     , _send_queue :: TQueue BS.ByteString
     , _scm_env :: Env
+    , _world_map :: WM.WorldMap
     }
 data Buffer = Buffer
     { _buffer :: I.Indexed (RB.RingBuffer FString)
@@ -154,6 +158,7 @@ initialSession settings q bindings scm_env = Sess
     , _recv_state = blankRecvState
     , _send_queue = q
     , _scm_env = scm_env
+    , _world_map = WM.empty
     }
     where b_lines = 50000
 
@@ -305,6 +310,11 @@ sendGmcp s = sendRawToServer $ [tIAC, tSB, tGMCP] ++
 receiveServerData :: Sess -> BS.ByteString -> Sess
 receiveServerData sess bs =
     sess & recv_state %~ \rs -> foldl handleServerByte rs $ BS.unpack bs
+
+addWorldRoom :: Int -> (Map.Map String String) -> [(Int, Int, String)] -> Sess -> Sess
+addWorldRoom node_id attrs edges sess =
+    sess & world_map . WM.nodes %~ Map.insert node_id attrs
+         & world_map . WM.edges %~ foldr (.) id (map (HS.insert . WM.makeEdge) edges)
 
 -- === HELPER FUNCTIONS ===
 -- Lenses for buffer access.

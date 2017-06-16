@@ -33,6 +33,11 @@
 (define (define-trigger pattern action)
   (set! *triggers* (hash-set *triggers* pattern action)))
 
+; ----- GMCP commands -----
+(define *gmcp-commands* (make-hash))
+(define (define-gmcp command action)
+  (set! *gmcp-commands* (hash-set *gmcp-commands* command action)))
+
 ; ----- Convenience functions -----
 ; Send input, optionally add to history, and write to scrollback buffer.
 (define (full-send hist s)
@@ -103,6 +108,7 @@
       (bind "S-Up" (scroll-lines 1))
       (bind "S-Down" (scroll-lines -1))
       (bind "M-d" toggle-buffer)
+      (bind "M-t" (send-gmcp "request room"))
       (bind "M-r" (composite (list reload-config
                                    (println "{bConfig reloaded.")))))))
 
@@ -142,9 +148,13 @@
 
 ; Hook to run when GMCP is received.
 (define (gmcp-hook iden data)
-  (composite (list
-              (println (string-append "{gGMCP: " iden))
-              (println (string-append "{g" (string-repr data))))))
+  (let ((out (println (string-append "{gGMCP:"
+                                     iden
+                                     (string #\newline)
+                                     (string-repr data)))))
+    (if (hash-contains? *gmcp-commands* iden)
+        (composite (list out ((hash-get *gmcp-commands* iden) data)))
+        out)))
 
 ; Hook to run when data is received.
 (define (recv-hook data)
@@ -170,3 +180,4 @@
      (list
       (println (string-append "{m===Triggered on " (car m) "==="))
       (send-helper #f "look")))))
+(define-gmcp "room.info" (lambda (data) (println "{yROOM FOUND")))

@@ -16,6 +16,7 @@ import Brick.Main (halt, continue)
 import Brick.Types (EventM, Next)
 import Control.Monad.IO.Class (liftIO)
 import Data.Array (elems)
+import Data.Either (lefts, rights)
 import Data.Maybe
 import Data.List (isInfixOf, intercalate)
 import Data.List.Split (splitOn)
@@ -57,6 +58,7 @@ scriptInterface = r5rsEnv >>= flip extendEnv
     , ((varNamespace, "writeln"), CustFunc (writeBufferLnWrapper mainBufferNum))
     , ((varNamespace, "add-input"), CustFunc addInputWrapper)
     , ((varNamespace, "move-cursor"), CustFunc moveCursorWrapper)
+    , ((varNamespace, "add-world-room"), CustFunc addWorldRoomWrapper)
     , ((varNamespace, "composite"), CustFunc compositeAction)
     , ((varNamespace, "string-repr"), CustFunc stringRepr)
     , ((varNamespace, "make-hash"), CustFunc makeHash)
@@ -229,6 +231,21 @@ sendToServerWrapper _ = liftThrows . Left . Default $ "Usage: (send <string>)"
 sendGmcpWrapper :: [LispVal] -> IOThrowsError LispVal
 sendGmcpWrapper [(String s)] = liftThrows . Right . ioSessFuncToOpaque $ sendGmcp s
 sendGmcpWrapper _ = liftThrows . Left . Default $ "Usage: (send-gmcp <string>)"
+
+addWorldRoomUsage = "Usage: (add-world-room id attrs edges) where edges is a list of (Number, Number, String)"
+addWorldRoomWrapper :: [LispVal] -> IOThrowsError LispVal
+addWorldRoomWrapper [(Number raw_id), (HashTable raw_attrs), (List raw_edges)]
+    | (length . lefts $ edges) == 0 = liftThrows . Right . sessFuncToOpaque $
+        addWorldRoom id attrs $ rights edges
+    | otherwise = liftThrows . Left . Default $ addWorldRoomUsage
+    where id = fromIntegral raw_id
+          attrs = M.fromList $ zip (map toStr $ M.keys raw_attrs)
+                                   (map toStr $ M.elems raw_attrs)
+          listToEdge (List [(Number raw_source), (Number raw_dest), (String raw_tag)]) =
+              Right $ (fromIntegral raw_source, fromIntegral raw_dest, raw_tag)
+          listToEdge _ = Left . Default $ addWorldRoomUsage
+          edges = map listToEdge raw_edges
+addWorldRoomWrapper _ = liftThrows . Left . Default $ addWorldRoomUsage
 
 bindWrapper :: [LispVal] -> IOThrowsError LispVal
 bindWrapper [(String key), act] =
