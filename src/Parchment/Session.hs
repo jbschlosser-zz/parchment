@@ -10,6 +10,7 @@ module Parchment.Session
     , deleteInput
     , sendToServer
     , sendRawToServer
+    , sendGmcp
     , clearInput
     , moveCursor
     , writeBuffer
@@ -294,6 +295,11 @@ sendRawToServer :: [Word8] -> Sess -> IO Sess
 sendRawToServer bytes sess = do
     atomically $ writeTQueue (sess ^. send_queue) $ BS.pack bytes
     return sess
+
+sendGmcp :: String -> Sess -> IO Sess
+sendGmcp s = sendRawToServer $ [tIAC, tSB, tGMCP] ++
+                               (BS.unpack . BSC.pack $ s) ++
+                               [tIAC, tSE]
 
 receiveServerData :: Sess -> BS.ByteString -> Sess
 receiveServerData sess bs =

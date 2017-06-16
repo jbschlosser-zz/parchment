@@ -46,6 +46,7 @@ scriptInterface = r5rsEnv >>= flip extendEnv
     , ((varNamespace, "toggle-buffer"), sessFuncToOpaque toggleBuffer)
     , ((varNamespace, "add-to-history"), CustFunc addToHistoryWrapper)
     , ((varNamespace, "send"), CustFunc sendToServerWrapper)
+    , ((varNamespace, "send-gmcp"), CustFunc sendGmcpWrapper)
     , ((varNamespace, "bind"), CustFunc bindWrapper)
     , ((varNamespace, "scroll-history"), CustFunc scrollHistoryWrapper)
     , ((varNamespace, "scroll-lines"), CustFunc scrollLinesWrapper)
@@ -221,8 +222,13 @@ writeBufferLnWrapper bnum [(String s)] = liftThrows . Right . sessFuncToOpaque .
 writeBufferLnWrapper _ _ = liftThrows . Left . Default $ "Usage: (println str)"
 
 sendToServerWrapper :: [LispVal] -> IOThrowsError LispVal
-sendToServerWrapper [(String s)] = liftThrows . Right . ioSessFuncToOpaque $ sendToServer s
+sendToServerWrapper [(String s)] = liftThrows . Right . ioSessFuncToOpaque $
+    sendToServer s
 sendToServerWrapper _ = liftThrows . Left . Default $ "Usage: (send <string>)"
+
+sendGmcpWrapper :: [LispVal] -> IOThrowsError LispVal
+sendGmcpWrapper [(String s)] = liftThrows . Right . ioSessFuncToOpaque $ sendGmcp s
+sendGmcpWrapper _ = liftThrows . Left . Default $ "Usage: (send-gmcp <string>)"
 
 bindWrapper :: [LispVal] -> IOThrowsError LispVal
 bindWrapper [(String key), act] =

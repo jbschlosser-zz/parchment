@@ -23,6 +23,7 @@ import Data.Conduit.TQueue (sourceTQueue)
 import Data.Default
 import qualified Data.HashMap.Lazy as HML
 import Data.List (isPrefixOf)
+import Data.List.Split (chunksOf)
 import Data.Map (fromList)
 import qualified Data.Map.Lazy as Map
 import Data.Maybe (fromJust)
@@ -244,11 +245,15 @@ drawBuffer buf =
     Widget Greedy Greedy $ do
         ctx <- getContext
         let num_lines = ctx ^. availHeightL
-        render $ foldr (<=>) (str "") . fmap drawBufferLine .
-            S.reverse . S.take num_lines . I.atCurrIndex (flip RB.drop) $ buf
+        let width = ctx ^. availWidthL
+        render $ foldr (<=>) (str "") . fmap drawBufferLine . concat .
+            fmap (chunksOfKeepBlanks width) . S.reverse . S.take num_lines .
+            I.atCurrIndex (flip RB.drop) $ buf
     where fcharToMarkup fc = (TXT.singleton $ _ch fc) @@ (_attr fc)
           drawBufferLine [] = str " " -- handle blank case
           drawBufferLine fs = markup . mconcat . fmap fcharToMarkup $ fs
+          chunksOfKeepBlanks _ [] = [[]]
+          chunksOfKeepBlanks n l = chunksOf n l
 
 drawStatusLine :: String -> Widget()
 drawStatusLine line =
