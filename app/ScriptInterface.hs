@@ -5,6 +5,7 @@ module ScriptInterface
     , loadConfigAction
     , rawKeys
     , liftAction
+    , evalHook
     -- Temporary
     , keyNameToEvent
     , partToModifier
@@ -23,7 +24,7 @@ import qualified Graphics.Vty as V
 import Language.Scheme.Core
 import Language.Scheme.Types hiding (bindings)
 import Language.Scheme.Variables
-import Lens.Micro ((&), (.~))
+import Lens.Micro ((&), (.~), (^.))
 import Parchment.FString
 import Parchment.Session
 import Parchment.Util
@@ -68,6 +69,19 @@ scriptInterface = r5rsEnv >>= flip extendEnv
 rawKeys :: String
 rawKeys = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890!@#$%^&*()_+-=_+[]\\;',./{}|:\"<>? `~"
 
+-- Evals the given Scheme hook and runs the returned action.
+evalHook :: String -> [LispVal] -> Sess -> IOMaybe Sess
+evalHook name args sess = do
+    let to_eval = List $ (Atom name) : args
+    res <- liftIO $ evalLisp' (sess ^. scm_env) to_eval
+    case res of
+            Right l -> do
+                case l of
+                    Opaque _ -> (opaqueToAction l) sess
+                    x -> returnMaybe . Just $
+                        sess & logError ("Expected an action, found: " ++ show x)
+            Left err -> returnMaybe . Just $ sess & logError (show err)
+
 -- Loads the config file. Returns the environment and optionally any errors.
 loadConfig :: IO (Env, Maybe String)
 loadConfig = do
@@ -84,16 +98,8 @@ loadConfigAction sess = do
     (scmEnv, configErr) <- liftIO loadConfig
     case configErr of
         Just err -> returnMaybe . Just . logError ("Config error: " ++ err) $ sess
-        Nothing -> do
-            let to_eval = List [Atom "load-hook"]
-            res <- liftIO $ evalLisp' scmEnv to_eval
-            case res of
-                 Right l -> do
-                     case l of
-                          Opaque _ -> opaqueToAction l (sess & scm_env .~ scmEnv)
-                          x -> returnMaybe . Just . logError
-                              ("Expected an action, found: " ++ show x) $ sess
-                 Left err -> returnMaybe . Just . logError (show err) $ sess
+        Nothing -> sess & scm_env .~ scmEnv
+                        & evalHook "load-hook" []
 
 -- Helper functions for converting between lisp types and Sess actions.
 opaqueToAction :: LispVal -> Sess -> IOMaybe Sess

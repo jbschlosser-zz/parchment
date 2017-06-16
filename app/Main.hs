@@ -110,19 +110,6 @@ onAppStart sess = do
     let lines = (T.height $ fromJust size) - nonBufferLines
     return $ sess & buffers . I.value . each . buffer . I.bounds_func .~ bufferBounds lines
 
--- Evals the given Scheme hook and runs the returned action.
-evalHook :: String -> [SCM.LispVal] -> Sess -> IOMaybe Sess
-evalHook name args sess = do
-    let to_eval = SCM.List $ (SCM.Atom name) : args
-    res <- liftIO $ evalLisp' (sess ^. scm_env) to_eval
-    case res of
-            Right l -> do
-                case l of
-                    SCM.Opaque _ -> (opaqueToAction l) sess
-                    x -> returnMaybe . Just $
-                        sess & logError ("Expected an action, found: " ++ show x)
-            Left err -> returnMaybe . Just $ sess & logError (show err)
-
 -- Key bindings.
 keyBindings = fromList $ map rawKeyBinding rawKeys ++
     [ ((V.EvKey V.KEsc []), halt)
